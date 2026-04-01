@@ -23,7 +23,7 @@
 #define WNUM   512   // number of wavelength slices
 #define MAXLYS 172   // maximum number of ice layers
 #define MAXGEO 16384 // maximum number of OMs
-#define MAXRND 131072 // max. number of random number multipliers
+#define MAXRND 262144 // max. number of random number multipliers
 
 // #define DTMN
 #define XXX 1.e-5f
@@ -509,6 +509,27 @@ struct dats{
   float sum, bfr[12];
 
   line sc[NSTR];
+
+#ifdef TABULATE
+  // Tabulation histogram parameters
+  // Cylindrical coords relative to source: (rho, z_receiver, time_residual)
+  // Source position and direction set via environment variables
+  float tab_src[3];    // source position (x, y, z) in PPC coords
+  float tab_dir[3];    // source direction (unit vector)
+
+  // Bin definitions
+  int tab_n_rho;       // number of rho bins
+  int tab_n_z;         // number of z bins
+  int tab_n_t;         // number of time bins
+  float tab_rho_max;   // max rho (m)
+  float tab_z_min;     // min z in PPC coords
+  float tab_z_max;     // max z in PPC coords
+  float tab_t_max;     // max time residual (ns)
+  float tab_rho_power; // power for rho binning (2 = quadratic)
+  int tab_n_bins;      // total bins = n_rho * n_z * n_t
+
+  unsigned int * tab_hist; // histogram buffer [tab_n_bins], atomicAdd target
+#endif
 
   datz * z;
   hit * hits;

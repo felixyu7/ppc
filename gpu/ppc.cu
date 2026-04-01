@@ -35,6 +35,45 @@ namespace xppc{
 
   void initialize(float enh = 1.f){ m.set(); q.eff*=enh; }
 
+#ifdef TABULATE
+  void tab_init(){
+    char *ev;
+    ev=getenv("TAB_SRC_X"); d.tab_src[0]=ev?atof(ev):0;
+    ev=getenv("TAB_SRC_Y"); d.tab_src[1]=ev?atof(ev):0;
+    ev=getenv("TAB_SRC_Z"); d.tab_src[2]=ev?atof(ev):0;
+    ev=getenv("TAB_DIR_X"); d.tab_dir[0]=ev?atof(ev):0;
+    ev=getenv("TAB_DIR_Y"); d.tab_dir[1]=ev?atof(ev):0;
+    ev=getenv("TAB_DIR_Z"); d.tab_dir[2]=ev?atof(ev):-1;
+    float dn=sqrtf(d.tab_dir[0]*d.tab_dir[0]+d.tab_dir[1]*d.tab_dir[1]+d.tab_dir[2]*d.tab_dir[2]);
+    if(dn>0){ d.tab_dir[0]/=dn; d.tab_dir[1]/=dn; d.tab_dir[2]/=dn; }
+    ev=getenv("TAB_N_RHO"); d.tab_n_rho=ev?atoi(ev):100;
+    ev=getenv("TAB_N_Z");   d.tab_n_z=ev?atoi(ev):100;
+    ev=getenv("TAB_N_T");   d.tab_n_t=ev?atoi(ev):105;
+    ev=getenv("TAB_RHO_MAX"); d.tab_rho_max=ev?atof(ev):500;
+    ev=getenv("TAB_Z_MIN");   d.tab_z_min=ev?atof(ev):-600;
+    ev=getenv("TAB_Z_MAX");   d.tab_z_max=ev?atof(ev):600;
+    ev=getenv("TAB_T_MAX");   d.tab_t_max=ev?atof(ev):3000;
+    ev=getenv("TAB_RHO_POWER"); d.tab_rho_power=ev?atof(ev):2;
+    d.tab_n_bins=d.tab_n_rho*d.tab_n_z*d.tab_n_t;
+    cerr<<"Tabulation: "<<d.tab_n_rho<<"x"<<d.tab_n_z<<"x"<<d.tab_n_t<<"="<<d.tab_n_bins<<" bins"
+        <<" rho_max="<<d.tab_rho_max<<" z=["<<d.tab_z_min<<","<<d.tab_z_max<<"] t_max="<<d.tab_t_max<<endl;
+  }
+  unsigned int * tab_hist_host=NULL;
+  void tab_finalize_histogram();
+  void tab_print_histogram(){
+    if(!tab_hist_host) tab_finalize_histogram();
+    // Copy from device (handled per-platform below)
+    for(int i=0; i<d.tab_n_bins; i++){
+      if(tab_hist_host[i]>0){
+        int i_rho=i%d.tab_n_rho;
+        int i_z=(i/d.tab_n_rho)%d.tab_n_z;
+        int i_t=i/(d.tab_n_rho*d.tab_n_z);
+        printf("TAB %d %d %d %u\n", i_rho, i_z, i_t, tab_hist_host[i]);
+      }
+    }
+  }
+#endif
+
   unsigned int pmax, pmxo, pn, pk, hquo;
 
   void setq(){
@@ -71,6 +110,13 @@ namespace xppc{
       d.z=&z; d.oms=q.oms; e=&d;
     }
 
+#ifdef TABULATE
+    {
+      d.tab_hist=new unsigned int[d.tab_n_bins];
+      memset(d.tab_hist, 0, d.tab_n_bins*sizeof(unsigned int));
+    }
+#endif
+
     {
       unsigned int size=d.rsize, need=seed+1;
       if(size<need) cerr<<"Error: not enough multipliers: asked for "<<seed<<"-th out of "<<size<<"!"<<endl;
@@ -81,6 +127,9 @@ namespace xppc{
     delete d.pz;
     delete d.hits;
     delete d.bf;
+#ifdef TABULATE
+    delete[] d.tab_hist;
+#endif
   }
 
 #ifdef XLIB
@@ -224,8 +273,16 @@ namespace xppc{
 	unsigned long size=d.gsize*sizeof(DOM); cnt+=size;
 	checkError(cudaMalloc((void**) &d.oms, size));
 	checkError(cudaMemcpy(d.oms, &q.oms, size, cudaMemcpyHostToDevice));
-	// checkError(cudaMemcpyToSymbol(oms, q.oms, size));
       }
+
+#ifdef TABULATE
+      {
+	unsigned long size=(unsigned long)d.tab_n_bins*sizeof(unsigned int); tot+=size;
+	checkError(cudaMalloc((void**) &d.tab_hist, size));
+	checkError(cudaMemset(d.tab_hist, 0, size));
+	cerr<<"Tabulation histogram: "<<d.tab_n_bins<<" bins ("<<size<<" bytes)"<<endl;
+      }
+#endif
 
       {
 	unsigned long size=sizeof(dats); tot+=size;
@@ -242,6 +299,9 @@ namespace xppc{
       checkError(cudaFree(d.pz));
       checkError(cudaFree(d.bf));
       checkError(cudaFree(d.oms));
+#ifdef TABULATE
+      checkError(cudaFree(d.tab_hist));
+#endif
       checkError(cudaFree(e));
       checkError(cudaEventDestroy(evt1));
       checkError(cudaEventDestroy(evt2));
@@ -427,6 +487,25 @@ namespace xppc{
   static unsigned int old=0;
 #endif
 
+#ifdef TABULATE
+  void tab_finalize_histogram(){
+    if(!tab_hist_host) tab_hist_host=new unsigned int[d.tab_n_bins];
+    memset(tab_hist_host, 0, d.tab_n_bins*sizeof(unsigned int));
+#ifndef XCPU
+    unsigned int * tab_hist_gpu=new unsigned int[d.tab_n_bins];
+    for(size_t gi=0; gi<gpus.size(); gi++){
+      gpus[gi].set();
+      checkError(cudaMemcpy(tab_hist_gpu, gpus[gi].d.tab_hist,
+                 d.tab_n_bins*sizeof(unsigned int), cudaMemcpyDeviceToHost));
+      for(int i=0; i<d.tab_n_bins; i++) tab_hist_host[i]+=tab_hist_gpu[i];
+    }
+    delete[] tab_hist_gpu;
+#else
+    memcpy(tab_hist_host, d.tab_hist, d.tab_n_bins*sizeof(unsigned int));
+#endif
+  }
+#endif
+
   void print();
 
   void kernel(unsigned int num){
@@ -572,9 +651,15 @@ int main(int arg_c, char *arg_a[]){
     int device=0;
     if(arg_c>1) device=atoi(arg_a[1]);
     initialize();
+#ifdef TABULATE
+    tab_init();
+#endif
     choose(device);
     fprintf(stderr, "Processing f2k muons from stdin on device %d\n", device);
     f2k();
+#ifdef TABULATE
+    tab_print_histogram();
+#endif
   }
   else{
     int str=0, dom=0, device=0, itr=0;

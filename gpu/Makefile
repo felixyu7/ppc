@@ -28,6 +28,9 @@ go:
 gpu:
 	$(nvcc) -o ppc $(warn)
 
+tab:
+	$(nvcc) -DTABULATE -o ppc_tab $(warn)
+
 glib:
 	$(nvcc),$(mlib)
 

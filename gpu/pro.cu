@@ -571,6 +571,48 @@ __global__ void propagate(dats * ed, unsigned int num){
       if(tot<sca) sca=tot, tot=0; else tot=(tot-sca)*w->z[J].abs;
     }
 
+#ifdef TABULATE
+    // Tabulation mode: advance to scattering point, record position, no DOM check.
+    {
+      float del=sca;
+
+      // advance
+      r.x+=del*n.x;
+      r.y+=del*n.y;
+      r.z+=del*n.z;
+      r.w+=del*n.w;
+
+      // Compute source-relative cylindrical coordinates
+      float ddx=r.x-e.tab_src[0];
+      float ddy=r.y-e.tab_src[1];
+      float ddz=r.z-e.tab_src[2];
+
+      float along=ddx*e.tab_dir[0]+ddy*e.tab_dir[1]+ddz*e.tab_dir[2];
+      float px=ddx-along*e.tab_dir[0];
+      float py=ddy-along*e.tab_dir[1];
+      float pz=ddz-along*e.tab_dir[2];
+      float rho=sqrtf(px*px+py*py+pz*pz);
+
+      // Time residual: t_actual - t_direct_path
+      float d_total=sqrtf(ddx*ddx+ddy*ddy+ddz*ddz);
+      float t_direct=d_total*n.w; // n.w = ocm = 1/c_medium
+      float t_res=r.w-t_direct;
+
+      // Bin indices (power-law rho binning)
+      float rho_frac=powf(rho/e.tab_rho_max, 1.0f/e.tab_rho_power);
+      int i_rho=min(max(__float2int_rd(rho_frac*e.tab_n_rho), 0), e.tab_n_rho-1);
+      int i_z=min(max(__float2int_rd((r.z-e.tab_z_min)/(e.tab_z_max-e.tab_z_min)*e.tab_n_z), 0), e.tab_n_z-1);
+      int i_t=min(max(__float2int_rd(t_res/e.tab_t_max*e.tab_n_t), 0), e.tab_n_t-1);
+
+      if(rho<e.tab_rho_max && t_res>=0 && t_res<e.tab_t_max &&
+         r.z>=e.tab_z_min && r.z<=e.tab_z_max){
+        int bin=i_rho + e.tab_n_rho*(i_z + e.tab_n_z*i_t);
+        if(bin>=0 && bin<e.tab_n_bins) atomicAdd(&e.tab_hist[bin], 1);
+      }
+
+      SCA=0, TOT=tot*nr;
+    }
+#else
     om=-1;
     float del=sca;
     float hi=sca, hf=0;
@@ -751,9 +793,57 @@ __global__ void propagate(dats * ed, unsigned int num){
 	if(e.xR==1) TOT=0; else old=om;
       }
     }
+#endif // TABULATE
 
     if(TOT<XXX) TOT=0;
     else{
+#ifdef TABULATE
+      // In tabulate mode: no birefringence, no hole ice; just scatter
+      SCA=0;
+      {
+        float sf=e.sf, g=e.g, gr=e.gr;
+
+        float xi=xrnd(s);
+        if(xi>sf){
+          xi=(1-xi)/(1-sf);
+          xi=2*xi-1;
+          if(g!=0){
+            float ga=(1-g*g)/(1+g*xi);
+            xi=(ga*ga-square(1-g))/(2*g);
+          }
+        }
+        else{
+          xi/=sf;
+          xi=2*(1-powf(xi, gr));
+        }
+        if(xi<0) xi=0; else if(xi>2) xi=2;
+
+        aniz az=e.az[J];
+        float k1=az.k1, k2=az.k2;
+        float okz=k1*k2;
+
+        { // anisotropic scattering
+          float n1=( e.azx*n.x+e.azy*n.y)*k1;
+          float n2=(-e.azy*n.x+e.azx*n.y)*k2;
+          n.x=n1*e.azx-n2*e.azy;
+          n.y=n1*e.azy+n2*e.azx;
+          n.z/=okz;
+          my_normalize(n);
+        }
+
+        rotate(xi, sqrtf(xi*(2-xi)), n, s);
+
+        { // rotate back
+          float n1=( e.azx*n.x+e.azy*n.y)/k1;
+          float n2=(-e.azy*n.x+e.azx*n.y)/k2;
+          n.x=n1*e.azx-n2*e.azy;
+          n.y=n1*e.azy+n2*e.azx;
+          n.z*=okz;
+          my_normalize(n);
+        }
+      }
+    }
+#else
       if(e.sum>0 && fin>0){ // birefringence
 	float ra; // e.az[J].ra*fin
 	float rb; // e.az[J].rb*fin
@@ -886,6 +976,7 @@ __global__ void propagate(dats * ed, unsigned int num){
 	}
       }
     }
+#endif // TABULATE
   }
 
   {

@@ -579,6 +579,9 @@ void f2k(){
   }
   eout();
 
+#ifdef TABULATE
+  tab_finalize_histogram();
+#endif
   fin();
 }
 #endif
