@@ -572,44 +572,68 @@ __global__ void propagate(dats * ed, unsigned int num){
     }
 
 #ifdef TABULATE
-    // Tabulation mode: advance to scattering point, record position, no DOM check.
+    // CLSim-aligned tabulation: sub-sample every 1m along photon trajectory,
+    // record in 4D histogram (rho, phi, z_closest, t_res).
     {
-      float del=sca;
+      float step_len=sca;
+      float STEP=1.0f; // VOLUME_MODE_STEP = 1 meter (matches CLSim)
 
-      // advance
-      r.x+=del*n.x;
-      r.y+=del*n.y;
-      r.z+=del*n.z;
-      r.w+=del*n.w;
+      for(float dd=STEP*0.5f; dd<step_len; dd+=STEP){
+        // Position at this sub-step (don't advance r yet)
+        float sx=r.x+dd*n.x;
+        float sy=r.y+dd*n.y;
+        float sz=r.z+dd*n.z;
+        float st=r.w+dd*n.w;
 
-      // Compute source-relative cylindrical coordinates
-      float ddx=r.x-e.tab_src[0];
-      float ddy=r.y-e.tab_src[1];
-      float ddz=r.z-e.tab_src[2];
+        // Source-relative vector
+        float dx=sx-e.tab_src[0];
+        float dy=sy-e.tab_src[1];
+        float dz=sz-e.tab_src[2];
 
-      float along=ddx*e.tab_dir[0]+ddy*e.tab_dir[1]+ddz*e.tab_dir[2];
-      float px=ddx-along*e.tab_dir[0];
-      float py=ddy-along*e.tab_dir[1];
-      float pz=ddz-along*e.tab_dir[2];
-      float rho=sqrtf(px*px+py*py+pz*pz);
+        // l = signed distance along track to perpendicular foot
+        float l=dx*e.tab_dir[0]+dy*e.tab_dir[1]+dz*e.tab_dir[2];
 
-      // Time residual: t_actual - t_direct_path
-      float d_total=sqrtf(ddx*ddx+ddy*ddy+ddz*ddz);
-      float t_direct=d_total*n.w; // n.w = ocm = 1/c_medium
-      float t_res=r.w-t_direct;
+        // Perpendicular vector and rho
+        float px=dx-l*e.tab_dir[0];
+        float py=dy-l*e.tab_dir[1];
+        float pz=dz-l*e.tab_dir[2];
+        float rho=sqrtf(px*px+py*py+pz*pz);
 
-      // Bin indices (power-law rho binning)
-      float rho_frac=powf(rho/e.tab_rho_max, 1.0f/e.tab_rho_power);
-      int i_rho=min(max(__float2int_rd(rho_frac*e.tab_n_rho), 0), e.tab_n_rho-1);
-      int i_z=min(max(__float2int_rd((r.z-e.tab_z_min)/(e.tab_z_max-e.tab_z_min)*e.tab_n_z), 0), e.tab_n_z-1);
-      int i_t=min(max(__float2int_rd(t_res/e.tab_t_max*e.tab_n_t), 0), e.tab_n_t-1);
+        // z_closest = depth of perpendicular foot on track (CLSim convention)
+        float z_cl=e.tab_src[2]+l*e.tab_dir[2];
 
-      if(rho<e.tab_rho_max && t_res>=0 && t_res<e.tab_t_max &&
-         r.z>=e.tab_z_min && r.z<=e.tab_z_max){
-        int bin=i_rho + e.tab_n_rho*(i_z + e.tab_n_z*i_t);
-        if(bin>=0 && bin<e.tab_n_bins) atomicAdd(&e.tab_hist[bin], 1);
+        // phi = acos(dot(perp_vec, perpDir) / rho) (CLSim convention)
+        float phi=0;
+        if(rho>1e-6f){
+          float cosph=(px*e.tab_perp[0]+py*e.tab_perp[1]+pz*e.tab_perp[2])/rho;
+          cosph=fminf(fmaxf(cosph,-1.0f),1.0f);
+          phi=acosf(cosph);
+        }
+
+        // t_res = t - (l + rho * tan_thetaC) * recip_c_group (CLSim convention)
+        float t_res=st-(l+rho*e.tab_tan_thetac)*e.tab_recip_cg;
+
+        // 4D bin indices
+        float rho_frac=powf(rho/e.tab_rho_max, 1.0f/e.tab_rho_power);
+        int i_rho=min(max(__float2int_rd(rho_frac*e.tab_n_rho),0),e.tab_n_rho-1);
+        int i_phi=min(max(__float2int_rd(phi/e.tab_phi_max*e.tab_n_phi),0),e.tab_n_phi-1);
+        int i_zcl=min(max(__float2int_rd((z_cl-e.tab_zcl_min)/(e.tab_zcl_max-e.tab_zcl_min)*e.tab_n_zcl),0),e.tab_n_zcl-1);
+        float t_frac=powf(fmaxf(t_res,0.0f)/e.tab_t_max, 1.0f/e.tab_t_power);
+        int i_t=min(max(__float2int_rd(t_frac*e.tab_n_t),0),e.tab_n_t-1);
+
+        if(rho>0 && rho<e.tab_rho_max &&
+           z_cl>=e.tab_zcl_min && z_cl<=e.tab_zcl_max &&
+           t_res>=0 && t_res<e.tab_t_max){
+          int bin=i_rho+e.tab_n_rho*(i_phi+e.tab_n_phi*(i_zcl+e.tab_n_zcl*i_t));
+          if(bin>=0 && bin<e.tab_n_bins) atomicAdd(&e.tab_hist[bin], 1.0f);
+        }
       }
 
+      // Advance photon to scattering point (full step)
+      r.x+=step_len*n.x;
+      r.y+=step_len*n.y;
+      r.z+=step_len*n.z;
+      r.w+=step_len*n.w;
       SCA=0, TOT=tot*nr;
     }
 #else

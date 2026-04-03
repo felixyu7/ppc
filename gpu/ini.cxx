@@ -511,24 +511,32 @@ struct dats{
   line sc[NSTR];
 
 #ifdef TABULATE
-  // Tabulation histogram parameters
-  // Cylindrical coords relative to source: (rho, z_receiver, time_residual)
-  // Source position and direction set via environment variables
+  // CLSim-aligned 4D tabulation: (rho, phi, z_closest, t_res)
   float tab_src[3];    // source position (x, y, z) in PPC coords
   float tab_dir[3];    // source direction (unit vector)
+  float tab_perp[3];   // perpendicular reference direction for phi (CLSim perpDir)
 
-  // Bin definitions
-  int tab_n_rho;       // number of rho bins
-  int tab_n_z;         // number of z bins
-  int tab_n_t;         // number of time bins
-  float tab_rho_max;   // max rho (m)
-  float tab_z_min;     // min z in PPC coords
-  float tab_z_max;     // max z in PPC coords
-  float tab_t_max;     // max time residual (ns)
-  float tab_rho_power; // power for rho binning (2 = quadratic)
-  int tab_n_bins;      // total bins = n_rho * n_z * n_t
+  // 4D bin counts
+  int tab_n_rho;       // rho bins (default 100, PowerAxis p=2)
+  int tab_n_phi;       // phi bins (default 36, Linear [0, pi])
+  int tab_n_zcl;       // z_closest bins (default 80, Linear [-800, 800])
+  int tab_n_t;         // time bins (default 105, PowerAxis p=2)
 
-  unsigned int * tab_hist; // histogram buffer [tab_n_bins], atomicAdd target
+  // Bin ranges
+  float tab_rho_max;   // max rho (m), default 580
+  float tab_rho_power; // power for rho binning, default 2
+  float tab_phi_max;   // max phi (rad), default pi
+  float tab_zcl_min;   // min z_closest (m), default -800
+  float tab_zcl_max;   // max z_closest (m), default 800
+  float tab_t_max;     // max time residual (ns), default 7000
+  float tab_t_power;   // power for time binning, default 2
+
+  // Optical constants for Cherenkov time residual
+  float tab_tan_thetac; // tan(theta_c) = sinchr/coschr
+  float tab_recip_cg;   // 1/c_group (ns/m) = ocm
+
+  int tab_n_bins;      // total = n_rho * n_phi * n_zcl * n_t
+  float * tab_hist;    // histogram buffer [tab_n_bins], float atomicAdd
 #endif
 
   datz * z;

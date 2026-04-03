@@ -46,32 +46,49 @@ namespace xppc{
     ev=getenv("TAB_DIR_Z"); d.tab_dir[2]=ev?atof(ev):-1;
     float dn=sqrtf(d.tab_dir[0]*d.tab_dir[0]+d.tab_dir[1]*d.tab_dir[1]+d.tab_dir[2]*d.tab_dir[2]);
     if(dn>0){ d.tab_dir[0]/=dn; d.tab_dir[1]/=dn; d.tab_dir[2]/=dn; }
-    ev=getenv("TAB_N_RHO"); d.tab_n_rho=ev?atoi(ev):100;
-    ev=getenv("TAB_N_Z");   d.tab_n_z=ev?atoi(ev):100;
-    ev=getenv("TAB_N_T");   d.tab_n_t=ev?atoi(ev):105;
-    ev=getenv("TAB_RHO_MAX"); d.tab_rho_max=ev?atof(ev):500;
-    ev=getenv("TAB_Z_MIN");   d.tab_z_min=ev?atof(ev):-600;
-    ev=getenv("TAB_Z_MAX");   d.tab_z_max=ev?atof(ev):600;
-    ev=getenv("TAB_T_MAX");   d.tab_t_max=ev?atof(ev):3000;
+    // perpDir (CLSim convention)
+    { float dx=d.tab_dir[0], dy=d.tab_dir[1], dz=d.tab_dir[2];
+      float perpz=sqrtf(dx*dx+dy*dy);
+      if(perpz>1e-8f){ d.tab_perp[0]=-dx*dz/perpz; d.tab_perp[1]=-dy*dz/perpz; d.tab_perp[2]=perpz; }
+      else { d.tab_perp[0]=1; d.tab_perp[1]=0; d.tab_perp[2]=0; }
+    }
+    // 4D bin counts (CLSim defaults)
+    ev=getenv("TAB_N_RHO");   d.tab_n_rho=ev?atoi(ev):100;
+    ev=getenv("TAB_N_PHI");   d.tab_n_phi=ev?atoi(ev):36;
+    ev=getenv("TAB_N_ZCL");   d.tab_n_zcl=ev?atoi(ev):80;
+    ev=getenv("TAB_N_T");     d.tab_n_t=ev?atoi(ev):105;
+    // Bin ranges
+    ev=getenv("TAB_RHO_MAX");   d.tab_rho_max=ev?atof(ev):580;
     ev=getenv("TAB_RHO_POWER"); d.tab_rho_power=ev?atof(ev):2;
-    d.tab_n_bins=d.tab_n_rho*d.tab_n_z*d.tab_n_t;
-    cerr<<"Tabulation: "<<d.tab_n_rho<<"x"<<d.tab_n_z<<"x"<<d.tab_n_t<<"="<<d.tab_n_bins<<" bins"
-        <<" rho_max="<<d.tab_rho_max<<" z=["<<d.tab_z_min<<","<<d.tab_z_max<<"] t_max="<<d.tab_t_max<<endl;
+    d.tab_phi_max=M_PI;
+    ev=getenv("TAB_ZCL_MIN");   d.tab_zcl_min=ev?atof(ev):-800;
+    ev=getenv("TAB_ZCL_MAX");   d.tab_zcl_max=ev?atof(ev):800;
+    ev=getenv("TAB_T_MAX");     d.tab_t_max=ev?atof(ev):7000;
+    ev=getenv("TAB_T_POWER");   d.tab_t_power=ev?atof(ev):2;
+    // Optical constants from ice model (mid-wavelength)
+    d.tab_tan_thetac=z.w[WNUM/2].sinchr/z.w[WNUM/2].coschr;
+    d.tab_recip_cg=z.w[WNUM/2].ocm;
+    d.tab_n_bins=d.tab_n_rho*d.tab_n_phi*d.tab_n_zcl*d.tab_n_t;
+    cerr<<"Tabulation: "<<d.tab_n_rho<<"x"<<d.tab_n_phi<<"x"<<d.tab_n_zcl<<"x"<<d.tab_n_t<<"="<<d.tab_n_bins<<" bins"
+        <<" rho_max="<<d.tab_rho_max<<" zcl=["<<d.tab_zcl_min<<","<<d.tab_zcl_max<<"] t_max="<<d.tab_t_max
+        <<" tan_tc="<<d.tab_tan_thetac<<" recip_cg="<<d.tab_recip_cg<<endl;
   }
-  unsigned int * tab_hist_host=NULL;
+  float * tab_hist_host=NULL;
   void tab_finalize_histogram();
+  void tab_reset_histogram();
   void tab_print_histogram(){
-    if(!tab_hist_host) tab_finalize_histogram();
-    // Copy from device (handled per-platform below)
+    tab_finalize_histogram();
     for(int i=0; i<d.tab_n_bins; i++){
       if(tab_hist_host[i]>0){
         int i_rho=i%d.tab_n_rho;
-        int i_z=(i/d.tab_n_rho)%d.tab_n_z;
-        int i_t=i/(d.tab_n_rho*d.tab_n_z);
-        printf("TAB %d %d %d %u\n", i_rho, i_z, i_t, tab_hist_host[i]);
+        int i_phi=(i/d.tab_n_rho)%d.tab_n_phi;
+        int i_zcl=(i/(d.tab_n_rho*d.tab_n_phi))%d.tab_n_zcl;
+        int i_t=i/(d.tab_n_rho*d.tab_n_phi*d.tab_n_zcl);
+        printf("TAB %d %d %d %d %.6e\n", i_rho, i_phi, i_zcl, i_t, tab_hist_host[i]);
       }
     }
   }
+  void tab_set_source(float sx, float sy, float sz, float dx, float dy, float dz);
 #endif
 
   unsigned int pmax, pmxo, pn, pk, hquo;
@@ -112,8 +129,8 @@ namespace xppc{
 
 #ifdef TABULATE
     {
-      d.tab_hist=new unsigned int[d.tab_n_bins];
-      memset(d.tab_hist, 0, d.tab_n_bins*sizeof(unsigned int));
+      d.tab_hist=new float[d.tab_n_bins];
+      memset(d.tab_hist, 0, d.tab_n_bins*sizeof(float));
     }
 #endif
 
@@ -277,7 +294,7 @@ namespace xppc{
 
 #ifdef TABULATE
       {
-	unsigned long size=(unsigned long)d.tab_n_bins*sizeof(unsigned int); tot+=size;
+	unsigned long size=(unsigned long)d.tab_n_bins*sizeof(float); tot+=size;
 	checkError(cudaMalloc((void**) &d.tab_hist, size));
 	checkError(cudaMemset(d.tab_hist, 0, size));
 	cerr<<"Tabulation histogram: "<<d.tab_n_bins<<" bins ("<<size<<" bytes)"<<endl;
@@ -489,19 +506,54 @@ namespace xppc{
 
 #ifdef TABULATE
   void tab_finalize_histogram(){
-    if(!tab_hist_host) tab_hist_host=new unsigned int[d.tab_n_bins];
-    memset(tab_hist_host, 0, d.tab_n_bins*sizeof(unsigned int));
+    if(!tab_hist_host) tab_hist_host=new float[d.tab_n_bins];
+    memset(tab_hist_host, 0, d.tab_n_bins*sizeof(float));
 #ifndef XCPU
-    unsigned int * tab_hist_gpu=new unsigned int[d.tab_n_bins];
+    float * tab_hist_gpu=new float[d.tab_n_bins];
     for(size_t gi=0; gi<gpus.size(); gi++){
       gpus[gi].set();
       checkError(cudaMemcpy(tab_hist_gpu, gpus[gi].d.tab_hist,
-                 d.tab_n_bins*sizeof(unsigned int), cudaMemcpyDeviceToHost));
+                 d.tab_n_bins*sizeof(float), cudaMemcpyDeviceToHost));
       for(int i=0; i<d.tab_n_bins; i++) tab_hist_host[i]+=tab_hist_gpu[i];
     }
     delete[] tab_hist_gpu;
 #else
-    memcpy(tab_hist_host, d.tab_hist, d.tab_n_bins*sizeof(unsigned int));
+    memcpy(tab_hist_host, d.tab_hist, d.tab_n_bins*sizeof(float));
+#endif
+  }
+  void tab_reset_histogram(){
+#ifndef XCPU
+    for(size_t gi=0; gi<gpus.size(); gi++){
+      gpus[gi].set();
+      checkError(cudaMemset(gpus[gi].d.tab_hist, 0, d.tab_n_bins*sizeof(float)));
+    }
+#else
+    memset(d.tab_hist, 0, d.tab_n_bins*sizeof(float));
+#endif
+  }
+  void tab_set_source(float sx, float sy, float sz, float dx, float dy, float dz){
+    d.tab_src[0]=sx; d.tab_src[1]=sy; d.tab_src[2]=sz;
+    d.tab_dir[0]=dx; d.tab_dir[1]=dy; d.tab_dir[2]=dz;
+    float dn=sqrtf(dx*dx+dy*dy+dz*dz);
+    if(dn>0){ d.tab_dir[0]/=dn; d.tab_dir[1]/=dn; d.tab_dir[2]/=dn; }
+    // Compute perpDir (CLSim convention)
+    { float perpz=sqrtf(d.tab_dir[0]*d.tab_dir[0]+d.tab_dir[1]*d.tab_dir[1]);
+      if(perpz>1e-8f){
+        d.tab_perp[0]=-d.tab_dir[0]*d.tab_dir[2]/perpz;
+        d.tab_perp[1]=-d.tab_dir[1]*d.tab_dir[2]/perpz;
+        d.tab_perp[2]=perpz;
+      } else { d.tab_perp[0]=1; d.tab_perp[1]=0; d.tab_perp[2]=0; }
+    }
+#ifndef XCPU
+    for(size_t gi=0; gi<gpus.size(); gi++){
+      gpus[gi].set();
+      for(int k=0;k<3;k++){
+        gpus[gi].d.tab_src[k]=d.tab_src[k];
+        gpus[gi].d.tab_dir[k]=d.tab_dir[k];
+        gpus[gi].d.tab_perp[k]=d.tab_perp[k];
+      }
+      checkError(cudaMemcpy(gpus[gi].e, &gpus[gi].d, sizeof(dats), cudaMemcpyHostToDevice));
+    }
 #endif
   }
 #endif
@@ -657,9 +709,6 @@ int main(int arg_c, char *arg_a[]){
     choose(device);
     fprintf(stderr, "Processing f2k muons from stdin on device %d\n", device);
     f2k();
-#ifdef TABULATE
-    tab_print_histogram();
-#endif
   }
   else{
     int str=0, dom=0, device=0, itr=0;
