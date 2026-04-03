@@ -78,15 +78,20 @@ namespace xppc{
   void tab_reset_histogram();
   void tab_print_histogram(){
     tab_finalize_histogram();
+    // Binary output: uint32 n_nnz, then n_nnz × (int32 flat_idx, float32 value)
+    // flat_idx uses the same row-major layout as the internal array: i = i_rho + i_phi*n_rho + i_zcl*n_rho*n_phi + i_t*n_rho*n_phi*n_zcl
+    unsigned int n_nnz=0;
+    for(int i=0; i<d.tab_n_bins; i++) if(tab_hist_host[i]>0) n_nnz++;
+    fwrite(&n_nnz, sizeof(unsigned int), 1, stdout);
     for(int i=0; i<d.tab_n_bins; i++){
       if(tab_hist_host[i]>0){
-        int i_rho=i%d.tab_n_rho;
-        int i_phi=(i/d.tab_n_rho)%d.tab_n_phi;
-        int i_zcl=(i/(d.tab_n_rho*d.tab_n_phi))%d.tab_n_zcl;
-        int i_t=i/(d.tab_n_rho*d.tab_n_phi*d.tab_n_zcl);
-        printf("TAB %d %d %d %d %.6e\n", i_rho, i_phi, i_zcl, i_t, tab_hist_host[i]);
+        int idx=i;
+        float val=tab_hist_host[i];
+        fwrite(&idx, sizeof(int), 1, stdout);
+        fwrite(&val, sizeof(float), 1, stdout);
       }
     }
+    fflush(stdout);
   }
   void tab_set_source(float sx, float sy, float sz, float dx, float dy, float dz);
 #endif

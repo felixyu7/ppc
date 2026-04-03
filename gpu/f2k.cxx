@@ -586,8 +586,6 @@ void f2k(){
       if(sscanf(in.c_str(), "TAB %f %f %f %f %f %f", &sx, &sy, &sz, &dx, &dy, &dz)==6){
         eout();
         tab_print_histogram();
-        printf("TAB_DONE\n");
-        fflush(stdout);
         tab_reset_histogram();
         tab_set_source(sx, sy, sz, dx, dy, dz);
       }
@@ -598,8 +596,6 @@ void f2k(){
 
 #ifdef TABULATE
   tab_print_histogram();
-  printf("TAB_DONE\n");
-  fflush(stdout);
 #endif
   fin();
 }
