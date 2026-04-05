@@ -602,12 +602,13 @@ __global__ void propagate(dats * ed, unsigned int num){
         // z_closest = depth of perpendicular foot on track (CLSim convention)
         float z_cl=e.tab_src[2]+l*e.tab_dir[2];
 
-        // phi = acos(dot(perp_vec, perpDir) / rho) (CLSim convention)
+        // phi = atan2(sin_component, cos_component) for full [0, 2pi] range
         float phi=0;
         if(rho>1e-6f){
           float cosph=(px*e.tab_perp[0]+py*e.tab_perp[1]+pz*e.tab_perp[2])/rho;
-          cosph=fminf(fmaxf(cosph,-1.0f),1.0f);
-          phi=acosf(cosph);
+          float sinph=(px*e.tab_perp2[0]+py*e.tab_perp2[1]+pz*e.tab_perp2[2])/rho;
+          phi=atan2f(sinph, cosph);
+          if(phi<0) phi+=2.0f*M_PI;
         }
 
         // t_res = t - (l + rho * tan_thetaC) * recip_c_group (CLSim convention)

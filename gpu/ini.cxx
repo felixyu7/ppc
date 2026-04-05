@@ -515,17 +515,18 @@ struct dats{
   float tab_src[3];    // source position (x, y, z) in PPC coords
   float tab_dir[3];    // source direction (unit vector)
   float tab_perp[3];   // perpendicular reference direction for phi (CLSim perpDir)
+  float tab_perp2[3];  // second perp direction: tab_dir × tab_perp
 
   // 4D bin counts
   int tab_n_rho;       // rho bins (default 100, PowerAxis p=2)
-  int tab_n_phi;       // phi bins (default 36, Linear [0, pi])
+  int tab_n_phi;       // phi bins (default 36, Linear [0, 2*pi])
   int tab_n_zcl;       // z_closest bins (default 80, Linear [-800, 800])
   int tab_n_t;         // time bins (default 105, PowerAxis p=2)
 
   // Bin ranges
   float tab_rho_max;   // max rho (m), default 580
   float tab_rho_power; // power for rho binning, default 2
-  float tab_phi_max;   // max phi (rad), default pi
+  float tab_phi_max;   // max phi (rad), default 2*pi
   float tab_zcl_min;   // min z_closest (m), default -800
   float tab_zcl_max;   // max z_closest (m), default 800
   float tab_t_max;     // max time residual (ns), default 7000

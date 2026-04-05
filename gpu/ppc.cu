@@ -51,6 +51,10 @@ namespace xppc{
       float perpz=sqrtf(dx*dx+dy*dy);
       if(perpz>1e-8f){ d.tab_perp[0]=-dx*dz/perpz; d.tab_perp[1]=-dy*dz/perpz; d.tab_perp[2]=perpz; }
       else { d.tab_perp[0]=1; d.tab_perp[1]=0; d.tab_perp[2]=0; }
+      // perpDir2 = tab_dir × tab_perp (for signed phi via atan2)
+      d.tab_perp2[0]=d.tab_dir[1]*d.tab_perp[2]-d.tab_dir[2]*d.tab_perp[1];
+      d.tab_perp2[1]=d.tab_dir[2]*d.tab_perp[0]-d.tab_dir[0]*d.tab_perp[2];
+      d.tab_perp2[2]=d.tab_dir[0]*d.tab_perp[1]-d.tab_dir[1]*d.tab_perp[0];
     }
     // 4D bin counts (CLSim defaults)
     ev=getenv("TAB_N_RHO");   d.tab_n_rho=ev?atoi(ev):100;
@@ -60,7 +64,7 @@ namespace xppc{
     // Bin ranges
     ev=getenv("TAB_RHO_MAX");   d.tab_rho_max=ev?atof(ev):580;
     ev=getenv("TAB_RHO_POWER"); d.tab_rho_power=ev?atof(ev):2;
-    d.tab_phi_max=M_PI;
+    ev=getenv("TAB_PHI_MAX"); d.tab_phi_max=ev?atof(ev):2*M_PI;
     ev=getenv("TAB_ZCL_MIN");   d.tab_zcl_min=ev?atof(ev):-800;
     ev=getenv("TAB_ZCL_MAX");   d.tab_zcl_max=ev?atof(ev):800;
     ev=getenv("TAB_T_MAX");     d.tab_t_max=ev?atof(ev):7000;
@@ -548,6 +552,10 @@ namespace xppc{
         d.tab_perp[1]=-d.tab_dir[1]*d.tab_dir[2]/perpz;
         d.tab_perp[2]=perpz;
       } else { d.tab_perp[0]=1; d.tab_perp[1]=0; d.tab_perp[2]=0; }
+      // perpDir2 = tab_dir × tab_perp (for signed phi via atan2)
+      d.tab_perp2[0]=d.tab_dir[1]*d.tab_perp[2]-d.tab_dir[2]*d.tab_perp[1];
+      d.tab_perp2[1]=d.tab_dir[2]*d.tab_perp[0]-d.tab_dir[0]*d.tab_perp[2];
+      d.tab_perp2[2]=d.tab_dir[0]*d.tab_perp[1]-d.tab_dir[1]*d.tab_perp[0];
     }
 #ifndef XCPU
     for(size_t gi=0; gi<gpus.size(); gi++){
@@ -556,6 +564,7 @@ namespace xppc{
         gpus[gi].d.tab_src[k]=d.tab_src[k];
         gpus[gi].d.tab_dir[k]=d.tab_dir[k];
         gpus[gi].d.tab_perp[k]=d.tab_perp[k];
+        gpus[gi].d.tab_perp2[k]=d.tab_perp2[k];
       }
       checkError(cudaMemcpy(gpus[gi].e, &gpus[gi].d, sizeof(dats), cudaMemcpyHostToDevice));
     }
