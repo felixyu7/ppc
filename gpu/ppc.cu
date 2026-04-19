@@ -56,25 +56,25 @@ namespace xppc{
       d.tab_perp2[1]=d.tab_dir[2]*d.tab_perp[0]-d.tab_dir[0]*d.tab_perp[2];
       d.tab_perp2[2]=d.tab_dir[0]*d.tab_perp[1]-d.tab_dir[1]*d.tab_perp[0];
     }
-    // 4D bin counts (CLSim defaults)
+    // 4D bin counts
     ev=getenv("TAB_N_RHO");   d.tab_n_rho=ev?atoi(ev):100;
     ev=getenv("TAB_N_PHI");   d.tab_n_phi=ev?atoi(ev):36;
-    ev=getenv("TAB_N_ZCL");   d.tab_n_zcl=ev?atoi(ev):80;
+    ev=getenv("TAB_N_L");     d.tab_n_l=ev?atoi(ev):80;
     ev=getenv("TAB_N_T");     d.tab_n_t=ev?atoi(ev):105;
     // Bin ranges
     ev=getenv("TAB_RHO_MAX");   d.tab_rho_max=ev?atof(ev):580;
     ev=getenv("TAB_RHO_POWER"); d.tab_rho_power=ev?atof(ev):2;
     ev=getenv("TAB_PHI_MAX"); d.tab_phi_max=ev?atof(ev):2*M_PI;
-    ev=getenv("TAB_ZCL_MIN");   d.tab_zcl_min=ev?atof(ev):-800;
-    ev=getenv("TAB_ZCL_MAX");   d.tab_zcl_max=ev?atof(ev):800;
+    ev=getenv("TAB_L_MIN");   d.tab_l_min=ev?atof(ev):-500;
+    ev=getenv("TAB_L_MAX");   d.tab_l_max=ev?atof(ev):500;
     ev=getenv("TAB_T_MAX");     d.tab_t_max=ev?atof(ev):7000;
     ev=getenv("TAB_T_POWER");   d.tab_t_power=ev?atof(ev):2;
     // Optical constants from ice model (mid-wavelength)
     d.tab_tan_thetac=z.w[WNUM/2].sinchr/z.w[WNUM/2].coschr;
     d.tab_recip_cg=z.w[WNUM/2].ocm;
-    d.tab_n_bins=d.tab_n_rho*d.tab_n_phi*d.tab_n_zcl*d.tab_n_t;
-    cerr<<"Tabulation: "<<d.tab_n_rho<<"x"<<d.tab_n_phi<<"x"<<d.tab_n_zcl<<"x"<<d.tab_n_t<<"="<<d.tab_n_bins<<" bins"
-        <<" rho_max="<<d.tab_rho_max<<" zcl=["<<d.tab_zcl_min<<","<<d.tab_zcl_max<<"] t_max="<<d.tab_t_max
+    d.tab_n_bins=d.tab_n_rho*d.tab_n_phi*d.tab_n_l*d.tab_n_t;
+    cerr<<"Tabulation: "<<d.tab_n_rho<<"x"<<d.tab_n_phi<<"x"<<d.tab_n_l<<"x"<<d.tab_n_t<<"="<<d.tab_n_bins<<" bins"
+        <<" rho_max="<<d.tab_rho_max<<" l=["<<d.tab_l_min<<","<<d.tab_l_max<<"] t_max="<<d.tab_t_max
         <<" tan_tc="<<d.tab_tan_thetac<<" recip_cg="<<d.tab_recip_cg<<endl;
   }
   float * tab_hist_host=NULL;

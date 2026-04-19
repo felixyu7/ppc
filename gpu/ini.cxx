@@ -511,7 +511,11 @@ struct dats{
   line sc[NSTR];
 
 #ifdef TABULATE
-  // CLSim-aligned 4D tabulation: (rho, phi, z_closest, t_res)
+  // Track-frame 4D tabulation: (rho, phi, l, t_res)
+  //   rho   perpendicular distance from track axis
+  //   phi   track-frame azimuth (reference = ẑ_ice projected ⊥ d̂)
+  //   l     signed along-track distance, l = (hit - src) · d̂
+  //   t_res photon arrival time minus Cherenkov ballistic offset
   float tab_src[3];    // source position (x, y, z) in PPC coords
   float tab_dir[3];    // source direction (unit vector)
   float tab_perp[3];   // perpendicular reference direction for phi (CLSim perpDir)
@@ -520,15 +524,15 @@ struct dats{
   // 4D bin counts
   int tab_n_rho;       // rho bins (default 100, PowerAxis p=2)
   int tab_n_phi;       // phi bins (default 36, Linear [0, 2*pi])
-  int tab_n_zcl;       // z_closest bins (default 80, Linear [-800, 800])
+  int tab_n_l;         // l bins (default 80, Linear [-500, 500])
   int tab_n_t;         // time bins (default 105, PowerAxis p=2)
 
   // Bin ranges
   float tab_rho_max;   // max rho (m), default 580
   float tab_rho_power; // power for rho binning, default 2
   float tab_phi_max;   // max phi (rad), default 2*pi
-  float tab_zcl_min;   // min z_closest (m), default -800
-  float tab_zcl_max;   // max z_closest (m), default 800
+  float tab_l_min;     // min l (m), default -500
+  float tab_l_max;     // max l (m), default 500
   float tab_t_max;     // max time residual (ns), default 7000
   float tab_t_power;   // power for time binning, default 2
 
@@ -536,7 +540,7 @@ struct dats{
   float tab_tan_thetac; // tan(theta_c) = sinchr/coschr
   float tab_recip_cg;   // 1/c_group (ns/m) = ocm
 
-  int tab_n_bins;      // total = n_rho * n_phi * n_zcl * n_t
+  int tab_n_bins;      // total = n_rho * n_phi * n_l * n_t
   float * tab_hist;    // histogram buffer [tab_n_bins], float atomicAdd
 #endif
 

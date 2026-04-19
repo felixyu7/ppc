@@ -572,8 +572,8 @@ __global__ void propagate(dats * ed, unsigned int num){
     }
 
 #ifdef TABULATE
-    // CLSim-aligned tabulation: sub-sample every 1m along photon trajectory,
-    // record in 4D histogram (rho, phi, z_closest, t_res).
+    // Track-frame tabulation: sub-sample every 1m along photon trajectory,
+    // record in 4D histogram (rho, phi, l, t_res).
     {
       float step_len=sca;
       float STEP=1.0f; // VOLUME_MODE_STEP = 1 meter (matches CLSim)
@@ -590,7 +590,7 @@ __global__ void propagate(dats * ed, unsigned int num){
         float dy=sy-e.tab_src[1];
         float dz=sz-e.tab_src[2];
 
-        // l = signed distance along track to perpendicular foot
+        // l = signed along-track distance (= (hit - src) · d̂)
         float l=dx*e.tab_dir[0]+dy*e.tab_dir[1]+dz*e.tab_dir[2];
 
         // Perpendicular vector and rho
@@ -598,9 +598,6 @@ __global__ void propagate(dats * ed, unsigned int num){
         float py=dy-l*e.tab_dir[1];
         float pz=dz-l*e.tab_dir[2];
         float rho=sqrtf(px*px+py*py+pz*pz);
-
-        // z_closest = depth of perpendicular foot on track (CLSim convention)
-        float z_cl=e.tab_src[2]+l*e.tab_dir[2];
 
         // phi = atan2(sin_component, cos_component) for full [0, 2pi] range
         float phi=0;
@@ -618,14 +615,14 @@ __global__ void propagate(dats * ed, unsigned int num){
         float rho_frac=powf(rho/e.tab_rho_max, 1.0f/e.tab_rho_power);
         int i_rho=min(max(__float2int_rd(rho_frac*e.tab_n_rho),0),e.tab_n_rho-1);
         int i_phi=min(max(__float2int_rd(phi/e.tab_phi_max*e.tab_n_phi),0),e.tab_n_phi-1);
-        int i_zcl=min(max(__float2int_rd((z_cl-e.tab_zcl_min)/(e.tab_zcl_max-e.tab_zcl_min)*e.tab_n_zcl),0),e.tab_n_zcl-1);
+        int i_l=min(max(__float2int_rd((l-e.tab_l_min)/(e.tab_l_max-e.tab_l_min)*e.tab_n_l),0),e.tab_n_l-1);
         float t_frac=powf(fmaxf(t_res,0.0f)/e.tab_t_max, 1.0f/e.tab_t_power);
         int i_t=min(max(__float2int_rd(t_frac*e.tab_n_t),0),e.tab_n_t-1);
 
         if(rho>0 && rho<e.tab_rho_max &&
-           z_cl>=e.tab_zcl_min && z_cl<=e.tab_zcl_max &&
+           l>=e.tab_l_min && l<=e.tab_l_max &&
            t_res>=0 && t_res<e.tab_t_max){
-          int bin=i_rho+e.tab_n_rho*(i_phi+e.tab_n_phi*(i_zcl+e.tab_n_zcl*i_t));
+          int bin=i_rho+e.tab_n_rho*(i_phi+e.tab_n_phi*(i_l+e.tab_n_l*i_t));
           if(bin>=0 && bin<e.tab_n_bins) atomicAdd(&e.tab_hist[bin], 1.0f);
         }
       }
