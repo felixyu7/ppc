@@ -69,13 +69,18 @@ namespace xppc{
     ev=getenv("TAB_L_MAX");   d.tab_l_max=ev?atof(ev):500;
     ev=getenv("TAB_T_MAX");     d.tab_t_max=ev?atof(ev):7000;
     ev=getenv("TAB_T_POWER");   d.tab_t_power=ev?atof(ev):2;
-    // Optical constants from ice model (mid-wavelength)
-    d.tab_tan_thetac=z.w[WNUM/2].sinchr/z.w[WNUM/2].coschr;
-    d.tab_recip_cg=z.w[WNUM/2].ocm;
+    // Strict-physics geometric-time coefficients from the ice model
+    // (mid-wavelength). Decomposes t_geo = l*ocv + rho*((ocm-coschr*ocv)/sinchr).
+    {
+      float coschr=z.w[WNUM/2].coschr, sinchr=z.w[WNUM/2].sinchr;
+      float ocm=z.w[WNUM/2].ocm;
+      d.tab_t_geo_l=d.ocv;
+      d.tab_t_geo_r=(ocm-coschr*d.ocv)/sinchr;
+    }
     d.tab_n_bins=d.tab_n_rho*d.tab_n_phi*d.tab_n_l*d.tab_n_t;
     cerr<<"Tabulation: "<<d.tab_n_rho<<"x"<<d.tab_n_phi<<"x"<<d.tab_n_l<<"x"<<d.tab_n_t<<"="<<d.tab_n_bins<<" bins"
         <<" rho_max="<<d.tab_rho_max<<" l=["<<d.tab_l_min<<","<<d.tab_l_max<<"] t_max="<<d.tab_t_max
-        <<" tan_tc="<<d.tab_tan_thetac<<" recip_cg="<<d.tab_recip_cg<<endl;
+        <<" t_geo_l="<<d.tab_t_geo_l<<" t_geo_r="<<d.tab_t_geo_r<<endl;
   }
   float * tab_hist_host=NULL;
   void tab_finalize_histogram();

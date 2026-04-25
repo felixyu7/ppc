@@ -608,8 +608,10 @@ __global__ void propagate(dats * ed, unsigned int num){
           if(phi<0) phi+=2.0f*M_PI;
         }
 
-        // t_res = t - (l + rho * tan_thetaC) * recip_c_group (CLSim convention)
-        float t_res=st-(l+rho*e.tab_tan_thetac)*e.tab_recip_cg;
+        // t_res = t - (l/c_vac + rho * (n_g - cos θ_c)/(sin θ_c · c_vac))
+        //   strict-physics geometric time: muon at c_vac along l, Cherenkov
+        //   leg at v_g from emission point.
+        float t_res=st-(l*e.tab_t_geo_l + rho*e.tab_t_geo_r);
 
         // 4D bin indices
         float rho_frac=powf(rho/e.tab_rho_max, 1.0f/e.tab_rho_power);

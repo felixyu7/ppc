@@ -536,9 +536,13 @@ struct dats{
   float tab_t_max;     // max time residual (ns), default 7000
   float tab_t_power;   // power for time binning, default 2
 
-  // Optical constants for Cherenkov time residual
-  float tab_tan_thetac; // tan(theta_c) = sinchr/coschr
-  float tab_recip_cg;   // 1/c_group (ns/m) = ocm
+  // Strict-physics geometric-time decomposition coefficients:
+  //   t_geo = l * tab_t_geo_l + rho * tab_t_geo_r
+  // l-term: muon vacuum travel; R-term: Cherenkov in-medium leg minus
+  // saved muon path. See universal_generator/constants.py for the closed
+  // form (n_g, cos θ_c, sin θ_c).
+  float tab_t_geo_l;    // ns/m of l        = 1 / c_vac
+  float tab_t_geo_r;    // ns/m of rho      = (n_g - cos θ_c) / (sin θ_c · c_vac)
 
   int tab_n_bins;      // total = n_rho * n_phi * n_l * n_t
   float * tab_hist;    // histogram buffer [tab_n_bins], float atomicAdd
