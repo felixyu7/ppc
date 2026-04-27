@@ -613,19 +613,34 @@ __global__ void propagate(dats * ed, unsigned int num){
         //   leg at v_g from emission point.
         float t_res=st-(l*e.tab_t_geo_l + rho*e.tab_t_geo_r);
 
-        // 4D bin indices
+        // Spatial bin indices (t-axis stays continuous)
         float rho_frac=powf(rho/e.tab_rho_max, 1.0f/e.tab_rho_power);
         int i_rho=min(max(__float2int_rd(rho_frac*e.tab_n_rho),0),e.tab_n_rho-1);
         int i_phi=min(max(__float2int_rd(phi/e.tab_phi_max*e.tab_n_phi),0),e.tab_n_phi-1);
         int i_l=min(max(__float2int_rd((l-e.tab_l_min)/(e.tab_l_max-e.tab_l_min)*e.tab_n_l),0),e.tab_n_l-1);
+#ifndef TABULATE_RAW
         float t_frac=powf(fmaxf(t_res,0.0f)/e.tab_t_max, 1.0f/e.tab_t_power);
         int i_t=min(max(__float2int_rd(t_frac*e.tab_n_t),0),e.tab_n_t-1);
+#endif
 
         if(rho>0 && rho<e.tab_rho_max &&
            l>=e.tab_l_min && l<=e.tab_l_max &&
            t_res>=0 && t_res<e.tab_t_max){
+#ifdef TABULATE_RAW
+          // Bernoulli thinning of sub-step samples; the kernel learns
+          // p · Λ and the trainer absorbs the factor of p into exposure.
+          if(xrnd(s)<e.tab_subsample_prob){
+            int spatial_idx=i_rho+e.tab_n_rho*(i_phi+e.tab_n_phi*i_l);
+            unsigned int slot=atomicAdd(e.tab_buf_count, 1u);
+            if(slot<e.tab_buf_max){
+              e.tab_buf[slot].idx=spatial_idx;
+              e.tab_buf[slot].t=t_res;
+            }
+          }
+#else
           int bin=i_rho+e.tab_n_rho*(i_phi+e.tab_n_phi*(i_l+e.tab_n_l*i_t));
           if(bin>=0 && bin<e.tab_n_bins) atomicAdd(&e.tab_hist[bin], 1.0f);
+#endif
         }
       }
 

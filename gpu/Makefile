@@ -15,12 +15,14 @@ mlib	=	-fPIC -DXLIB -c -o ppc.o && $(CC) -shared \
 warn	=	2>&1 | grep -v assuming
 
 all:
-	@echo "	make go:   compile the ppc object code for GPU"
-	@echo "	make co:   compile the ppc object code for CPU"
-	@echo "	make gpu:  compile the ppc  executable for GPU"
-	@echo "	make cpu:  compile the ppc  executable for CPU"
-	@echo "	make glib: compile the libxppc library for GPU"
-	@echo "	make clib: compile the libxppc library for CPU"
+	@echo "	make go:      compile the ppc object code for GPU"
+	@echo "	make co:      compile the ppc object code for CPU"
+	@echo "	make gpu:     compile the ppc  executable for GPU"
+	@echo "	make cpu:     compile the ppc  executable for CPU"
+	@echo "	make tab:     compile ppc_tab (4D-histogram tabulation)"
+	@echo "	make tab_raw: compile ppc_tab_raw (per-photon list)"
+	@echo "	make glib:    compile the libxppc library for GPU"
+	@echo "	make clib:    compile the libxppc library for CPU"
 
 go:
 	$(nvcc) -o ppc.o -DXLIB -c $(warn)
@@ -30,6 +32,9 @@ gpu:
 
 tab:
 	$(nvcc) -DTABULATE -o ppc_tab $(warn)
+
+tab_raw:
+	$(nvcc) -DTABULATE -DTABULATE_RAW -o ppc_tab_raw $(warn)
 
 glib:
 	$(nvcc),$(mlib)

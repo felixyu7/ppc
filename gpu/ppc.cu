@@ -77,31 +77,33 @@ namespace xppc{
       d.tab_t_geo_l=d.ocv;
       d.tab_t_geo_r=(ocm-coschr*d.ocv)/sinchr;
     }
+#ifdef TABULATE_RAW
+    ev=getenv("TAB_BUF_MAX"); d.tab_buf_max=ev?(unsigned int)atoll(ev):100000000u;
+    ev=getenv("TAB_SUBSAMPLE_PROB"); d.tab_subsample_prob=ev?(float)atof(ev):1.0f;
+    if(d.tab_subsample_prob<=0.0f || d.tab_subsample_prob>1.0f){
+      cerr<<"Error: TAB_SUBSAMPLE_PROB must be in (0, 1], got "
+          <<d.tab_subsample_prob<<endl;
+      exit(2);
+    }
+    cerr<<"Tabulation (RAW): "<<d.tab_n_rho<<"x"<<d.tab_n_phi<<"x"<<d.tab_n_l
+        <<" spatial bins, photon-list buffer="<<d.tab_buf_max<<" records ("
+        <<((unsigned long long)d.tab_buf_max*sizeof(tab_record))<<" bytes)"<<endl
+        <<"  subsample_prob="<<d.tab_subsample_prob<<" rho_max="<<d.tab_rho_max
+        <<" l=["<<d.tab_l_min<<","<<d.tab_l_max<<"] t_max="<<d.tab_t_max
+        <<" t_geo_l="<<d.tab_t_geo_l<<" t_geo_r="<<d.tab_t_geo_r<<endl;
+#else
     d.tab_n_bins=d.tab_n_rho*d.tab_n_phi*d.tab_n_l*d.tab_n_t;
     cerr<<"Tabulation: "<<d.tab_n_rho<<"x"<<d.tab_n_phi<<"x"<<d.tab_n_l<<"x"<<d.tab_n_t<<"="<<d.tab_n_bins<<" bins"
         <<" rho_max="<<d.tab_rho_max<<" l=["<<d.tab_l_min<<","<<d.tab_l_max<<"] t_max="<<d.tab_t_max
         <<" t_geo_l="<<d.tab_t_geo_l<<" t_geo_r="<<d.tab_t_geo_r<<endl;
+#endif
   }
+#ifndef TABULATE_RAW
   float * tab_hist_host=NULL;
+#endif
   void tab_finalize_histogram();
   void tab_reset_histogram();
-  void tab_print_histogram(){
-    tab_finalize_histogram();
-    // Binary output: uint32 n_nnz, then n_nnz × (int32 flat_idx, float32 value)
-    // flat_idx uses the same row-major layout as the internal array: i = i_rho + i_phi*n_rho + i_zcl*n_rho*n_phi + i_t*n_rho*n_phi*n_zcl
-    unsigned int n_nnz=0;
-    for(int i=0; i<d.tab_n_bins; i++) if(tab_hist_host[i]>0) n_nnz++;
-    fwrite(&n_nnz, sizeof(unsigned int), 1, stdout);
-    for(int i=0; i<d.tab_n_bins; i++){
-      if(tab_hist_host[i]>0){
-        int idx=i;
-        float val=tab_hist_host[i];
-        fwrite(&idx, sizeof(int), 1, stdout);
-        fwrite(&val, sizeof(float), 1, stdout);
-      }
-    }
-    fflush(stdout);
-  }
+  void tab_print_histogram();
   void tab_set_source(float sx, float sy, float sz, float dx, float dy, float dz);
 #endif
 
@@ -142,10 +144,17 @@ namespace xppc{
     }
 
 #ifdef TABULATE
+#ifdef TABULATE_RAW
+    {
+      d.tab_buf=new tab_record[d.tab_buf_max];
+      d.tab_buf_count=new unsigned int(0);
+    }
+#else
     {
       d.tab_hist=new float[d.tab_n_bins];
       memset(d.tab_hist, 0, d.tab_n_bins*sizeof(float));
     }
+#endif
 #endif
 
     {
@@ -159,7 +168,12 @@ namespace xppc{
     delete d.hits;
     delete d.bf;
 #ifdef TABULATE
+#ifdef TABULATE_RAW
+    delete[] d.tab_buf;
+    delete d.tab_buf_count;
+#else
     delete[] d.tab_hist;
+#endif
 #endif
   }
 
@@ -307,12 +321,23 @@ namespace xppc{
       }
 
 #ifdef TABULATE
+#ifdef TABULATE_RAW
+      {
+	unsigned long size=(unsigned long)d.tab_buf_max*sizeof(tab_record); tot+=size;
+	checkError(cudaMalloc((void**) &d.tab_buf, size));
+	checkError(cudaMalloc((void**) &d.tab_buf_count, sizeof(unsigned int)));
+	checkError(cudaMemset(d.tab_buf_count, 0, sizeof(unsigned int)));
+	tot+=sizeof(unsigned int);
+	cerr<<"Tabulation (RAW) buffer: "<<d.tab_buf_max<<" records ("<<size<<" bytes)"<<endl;
+      }
+#else
       {
 	unsigned long size=(unsigned long)d.tab_n_bins*sizeof(float); tot+=size;
 	checkError(cudaMalloc((void**) &d.tab_hist, size));
 	checkError(cudaMemset(d.tab_hist, 0, size));
 	cerr<<"Tabulation histogram: "<<d.tab_n_bins<<" bins ("<<size<<" bytes)"<<endl;
       }
+#endif
 #endif
 
       {
@@ -331,7 +356,12 @@ namespace xppc{
       checkError(cudaFree(d.bf));
       checkError(cudaFree(d.oms));
 #ifdef TABULATE
+#ifdef TABULATE_RAW
+      checkError(cudaFree(d.tab_buf));
+      checkError(cudaFree(d.tab_buf_count));
+#else
       checkError(cudaFree(d.tab_hist));
+#endif
 #endif
       checkError(cudaFree(e));
       checkError(cudaEventDestroy(evt1));
@@ -519,6 +549,71 @@ namespace xppc{
 #endif
 
 #ifdef TABULATE
+#ifdef TABULATE_RAW
+  void tab_finalize_histogram(){ /* unused under TABULATE_RAW */ }
+  void tab_print_histogram(){
+    // Concatenate per-GPU photon-list buffers; emit
+    //   uint32 n_records ; n_records × (int32 idx, float32 t_res)
+    // packed AoS — matches the host-side struct tab_record layout.
+    unsigned int counts[64];
+    unsigned int total=0;
+    int n_gpu;
+#ifndef XCPU
+    n_gpu=(int)gpus.size();
+    for(int gi=0; gi<n_gpu; gi++){
+      gpus[gi].set();
+      unsigned int c;
+      checkError(cudaMemcpy(&c, gpus[gi].d.tab_buf_count,
+                            sizeof(unsigned int), cudaMemcpyDeviceToHost));
+      if(c>d.tab_buf_max){
+        cerr<<"Error: tab_buf overflow on GPU "<<gi<<": "<<c<<" > "
+            <<d.tab_buf_max<<" — refusing to emit truncated cache. "
+            "Raise TAB_BUF_MAX or lower TAB_SUBSAMPLE_PROB."<<endl;
+        exit(1);
+      }
+      counts[gi]=c; total+=c;
+    }
+#else
+    n_gpu=1;
+    {
+      unsigned int c=*d.tab_buf_count;
+      if(c>d.tab_buf_max){
+        cerr<<"Error: tab_buf overflow: "<<c<<" > "<<d.tab_buf_max
+            <<" — refusing to emit truncated cache. "
+            "Raise TAB_BUF_MAX or lower TAB_SUBSAMPLE_PROB."<<endl;
+        exit(1);
+      }
+      counts[0]=c; total=c;
+    }
+#endif
+    fwrite(&total, sizeof(unsigned int), 1, stdout);
+    for(int gi=0; gi<n_gpu; gi++){
+      unsigned int c=counts[gi];
+      if(c==0) continue;
+      tab_record * host_buf=new tab_record[c];
+#ifndef XCPU
+      gpus[gi].set();
+      checkError(cudaMemcpy(host_buf, gpus[gi].d.tab_buf,
+                            (size_t)c*sizeof(tab_record), cudaMemcpyDeviceToHost));
+#else
+      memcpy(host_buf, d.tab_buf, (size_t)c*sizeof(tab_record));
+#endif
+      fwrite(host_buf, sizeof(tab_record), c, stdout);
+      delete[] host_buf;
+    }
+    fflush(stdout);
+  }
+  void tab_reset_histogram(){
+#ifndef XCPU
+    for(size_t gi=0; gi<gpus.size(); gi++){
+      gpus[gi].set();
+      checkError(cudaMemset(gpus[gi].d.tab_buf_count, 0, sizeof(unsigned int)));
+    }
+#else
+    *d.tab_buf_count=0;
+#endif
+  }
+#else
   void tab_finalize_histogram(){
     if(!tab_hist_host) tab_hist_host=new float[d.tab_n_bins];
     memset(tab_hist_host, 0, d.tab_n_bins*sizeof(float));
@@ -535,6 +630,22 @@ namespace xppc{
     memcpy(tab_hist_host, d.tab_hist, d.tab_n_bins*sizeof(float));
 #endif
   }
+  void tab_print_histogram(){
+    tab_finalize_histogram();
+    // Binary output: uint32 n_nnz, then n_nnz × (int32 flat_idx, float32 value)
+    unsigned int n_nnz=0;
+    for(int i=0; i<d.tab_n_bins; i++) if(tab_hist_host[i]>0) n_nnz++;
+    fwrite(&n_nnz, sizeof(unsigned int), 1, stdout);
+    for(int i=0; i<d.tab_n_bins; i++){
+      if(tab_hist_host[i]>0){
+        int idx=i;
+        float val=tab_hist_host[i];
+        fwrite(&idx, sizeof(int), 1, stdout);
+        fwrite(&val, sizeof(float), 1, stdout);
+      }
+    }
+    fflush(stdout);
+  }
   void tab_reset_histogram(){
 #ifndef XCPU
     for(size_t gi=0; gi<gpus.size(); gi++){
@@ -545,6 +656,7 @@ namespace xppc{
     memset(d.tab_hist, 0, d.tab_n_bins*sizeof(float));
 #endif
   }
+#endif
   void tab_set_source(float sx, float sy, float sz, float dx, float dy, float dz){
     d.tab_src[0]=sx; d.tab_src[1]=sy; d.tab_src[2]=sz;
     d.tab_dir[0]=dx; d.tab_dir[1]=dy; d.tab_dir[2]=dz;

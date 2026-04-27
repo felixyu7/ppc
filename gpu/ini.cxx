@@ -449,6 +449,13 @@ struct datz{
   unsigned long long rs[MAXRND];
 } z;
 
+#ifdef TABULATE_RAW
+struct tab_record {
+  int idx;     // i_rho + n_rho*(i_phi + n_phi*i_l)
+  float t;     // t_res in ns
+};
+#endif
+
 struct dats{
   unsigned int hidx;
 
@@ -544,8 +551,27 @@ struct dats{
   float tab_t_geo_l;    // ns/m of l        = 1 / c_vac
   float tab_t_geo_r;    // ns/m of rho      = (n_g - cos θ_c) / (sin θ_c · c_vac)
 
+#ifdef TABULATE_RAW
+  // Photon-list emit. Each retained sub-step sample is appended as one
+  // 8-byte record (int32 spatial_idx, float32 t_res_ns); spatial_idx is
+  // i_rho + n_rho*(i_phi + n_phi*i_l) — t-axis is unbinned in this mode.
+  // tab_buf_count is a *pointer* to a single uint in global memory: the
+  // struct itself is copied into __shared__ at kernel start (see pro.cu),
+  // so a plain `unsigned int` field would shadow per-block instead of
+  // counting globally — same pointer trick as tab_buf.
+  // tab_subsample_prob: Bernoulli acceptance applied per sub-step; PPC's
+  // TABULATE samples photon trajectories every ~1 m, which (without
+  // thinning) produces ~10^10 records per config. The kernel learns
+  // p · Λ; the matching factor of p is folded into the exposure at
+  // training time.
+  float tab_subsample_prob;     // Bernoulli p ∈ (0, 1]
+  unsigned int tab_buf_max;     // capacity (records)
+  unsigned int * tab_buf_count; // device ptr → single uint, atomic write head
+  tab_record * tab_buf;         // [tab_buf_max] photon records (device ptr)
+#else
   int tab_n_bins;      // total = n_rho * n_phi * n_l * n_t
   float * tab_hist;    // histogram buffer [tab_n_bins], float atomicAdd
+#endif
 #endif
 
   datz * z;
