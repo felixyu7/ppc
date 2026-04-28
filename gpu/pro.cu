@@ -599,6 +599,23 @@ __global__ void propagate(dats * ed, unsigned int num){
         float pz=dz-l*e.tab_dir[2];
         float rho=sqrtf(px*px+py*py+pz*pz);
 
+        // t_res = t - (l/c_vac + rho * (n_g - cos θ_c)/(sin θ_c · c_vac))
+        //   strict-physics geometric time: muon at c_vac along l, Cherenkov
+        //   leg at v_g from emission point.
+        float t_res=st-(l*e.tab_t_geo_l + rho*e.tab_t_geo_r);
+
+        // Cheap validity gate (no transcendentals) before thinning + binning.
+        if(!(rho>0 && rho<e.tab_rho_max &&
+             l>=e.tab_l_min && l<=e.tab_l_max &&
+             t_res>=0 && t_res<e.tab_t_max)) continue;
+
+#ifdef TABULATE_RAW
+        // Bernoulli thinning BEFORE phi/powf: at p<<1, virtually all
+        // warps skip the transcendentals entirely. The kernel learns
+        // p · Λ; the trainer absorbs p into exposure.
+        if(xrnd(s)>=e.tab_subsample_prob) continue;
+#endif
+
         // phi = atan2(sin_component, cos_component) for full [0, 2pi] range
         float phi=0;
         if(rho>1e-6f){
@@ -608,40 +625,25 @@ __global__ void propagate(dats * ed, unsigned int num){
           if(phi<0) phi+=2.0f*M_PI;
         }
 
-        // t_res = t - (l/c_vac + rho * (n_g - cos θ_c)/(sin θ_c · c_vac))
-        //   strict-physics geometric time: muon at c_vac along l, Cherenkov
-        //   leg at v_g from emission point.
-        float t_res=st-(l*e.tab_t_geo_l + rho*e.tab_t_geo_r);
-
-        // Spatial bin indices (t-axis stays continuous)
+        // Spatial bin indices (t-axis stays continuous in RAW mode)
         float rho_frac=powf(rho/e.tab_rho_max, 1.0f/e.tab_rho_power);
         int i_rho=min(max(__float2int_rd(rho_frac*e.tab_n_rho),0),e.tab_n_rho-1);
         int i_phi=min(max(__float2int_rd(phi/e.tab_phi_max*e.tab_n_phi),0),e.tab_n_phi-1);
         int i_l=min(max(__float2int_rd((l-e.tab_l_min)/(e.tab_l_max-e.tab_l_min)*e.tab_n_l),0),e.tab_n_l-1);
-#ifndef TABULATE_RAW
+
+#ifdef TABULATE_RAW
+        int spatial_idx=i_rho+e.tab_n_rho*(i_phi+e.tab_n_phi*i_l);
+        unsigned int slot=atomicAdd(e.tab_buf_count, 1u);
+        if(slot<e.tab_buf_max){
+          e.tab_buf[slot].idx=spatial_idx;
+          e.tab_buf[slot].t=t_res;
+        }
+#else
         float t_frac=powf(fmaxf(t_res,0.0f)/e.tab_t_max, 1.0f/e.tab_t_power);
         int i_t=min(max(__float2int_rd(t_frac*e.tab_n_t),0),e.tab_n_t-1);
+        int bin=i_rho+e.tab_n_rho*(i_phi+e.tab_n_phi*(i_l+e.tab_n_l*i_t));
+        if(bin>=0 && bin<e.tab_n_bins) atomicAdd(&e.tab_hist[bin], 1.0f);
 #endif
-
-        if(rho>0 && rho<e.tab_rho_max &&
-           l>=e.tab_l_min && l<=e.tab_l_max &&
-           t_res>=0 && t_res<e.tab_t_max){
-#ifdef TABULATE_RAW
-          // Bernoulli thinning of sub-step samples; the kernel learns
-          // p · Λ and the trainer absorbs the factor of p into exposure.
-          if(xrnd(s)<e.tab_subsample_prob){
-            int spatial_idx=i_rho+e.tab_n_rho*(i_phi+e.tab_n_phi*i_l);
-            unsigned int slot=atomicAdd(e.tab_buf_count, 1u);
-            if(slot<e.tab_buf_max){
-              e.tab_buf[slot].idx=spatial_idx;
-              e.tab_buf[slot].t=t_res;
-            }
-          }
-#else
-          int bin=i_rho+e.tab_n_rho*(i_phi+e.tab_n_phi*(i_l+e.tab_n_l*i_t));
-          if(bin>=0 && bin<e.tab_n_bins) atomicAdd(&e.tab_hist[bin], 1.0f);
-#endif
-        }
       }
 
       // Advance photon to scattering point (full step)
