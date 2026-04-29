@@ -609,14 +609,7 @@ __global__ void propagate(dats * ed, unsigned int num){
              l>=e.tab_l_min && l<=e.tab_l_max &&
              t_res>=0 && t_res<e.tab_t_max)) continue;
 
-#ifdef TABULATE_RAW
-        // Bernoulli thinning BEFORE phi/powf: at p<<1, virtually all
-        // warps skip the transcendentals entirely. The kernel learns
-        // p · Λ; the trainer absorbs p into exposure.
-        if(xrnd(s)>=e.tab_subsample_prob) continue;
-#endif
-
-        // phi = atan2(sin_component, cos_component) for full [0, 2pi] range
+        // phi = atan2(sin_component, cos_component) for full [0, 2π] range
         float phi=0;
         if(rho>1e-6f){
           float cosph=(px*e.tab_perp[0]+py*e.tab_perp[1]+pz*e.tab_perp[2])/rho;
@@ -625,25 +618,19 @@ __global__ void propagate(dats * ed, unsigned int num){
           if(phi<0) phi+=2.0f*M_PI;
         }
 
-        // Spatial bin indices (t-axis stays continuous in RAW mode)
+        // Spatial bin indices
         float rho_frac=powf(rho/e.tab_rho_max, 1.0f/e.tab_rho_power);
         int i_rho=min(max(__float2int_rd(rho_frac*e.tab_n_rho),0),e.tab_n_rho-1);
         int i_phi=min(max(__float2int_rd(phi/e.tab_phi_max*e.tab_n_phi),0),e.tab_n_phi-1);
         int i_l=min(max(__float2int_rd((l-e.tab_l_min)/(e.tab_l_max-e.tab_l_min)*e.tab_n_l),0),e.tab_n_l-1);
 
-#ifdef TABULATE_RAW
+        // log1p time bin: y = log1p(t_res/τ) / log1p(T_max/τ) ∈ [0, 1).
+        // Full per-photon counts (no thinning); atomicAdd into [N_SPATIAL × K] uint32.
+        float y=log1pf(t_res*(1.0f/e.tab_tau))*e.tab_inv_log1p_T;
+        int i_t=min(max(__float2int_rd(y*e.tab_n_t_bins),0),e.tab_n_t_bins-1);
         int spatial_idx=i_rho+e.tab_n_rho*(i_phi+e.tab_n_phi*i_l);
-        unsigned int slot=atomicAdd(e.tab_buf_count, 1u);
-        if(slot<e.tab_buf_max){
-          e.tab_buf[slot].idx=spatial_idx;
-          e.tab_buf[slot].t=t_res;
-        }
-#else
-        float t_frac=powf(fmaxf(t_res,0.0f)/e.tab_t_max, 1.0f/e.tab_t_power);
-        int i_t=min(max(__float2int_rd(t_frac*e.tab_n_t),0),e.tab_n_t-1);
-        int bin=i_rho+e.tab_n_rho*(i_phi+e.tab_n_phi*(i_l+e.tab_n_l*i_t));
-        if(bin>=0 && bin<e.tab_n_bins) atomicAdd(&e.tab_hist[bin], 1.0f);
-#endif
+        // 64-bit flat index: TAB_K * N_SPATIAL can exceed 2^31 (TAB_K up to 65536).
+        atomicAdd(&e.tab_hist_st[(size_t)spatial_idx*e.tab_n_t_bins+i_t], 1u);
       }
 
       // Advance photon to scattering point (full step)
@@ -1034,3 +1021,41 @@ __global__ void propagate(dats * ed, unsigned int num){
   }
 
 }
+
+#if defined(TABULATE) && !defined(XCPU)
+// GPU-side sparsifier: replaces the dense [N_SPATIAL × K] D2H + dense host
+// scan with two row-parallel kernels and a small D2H of CSR arrays. One
+// thread per spatial row. Output time_ids are sorted ascending within each
+// row (we scan k = 0..K-1 sequentially), matching the host-scan ordering.
+__global__ void tab_sparsify_count(const unsigned int * hist,
+                                   unsigned int N_SPATIAL,
+                                   unsigned int K,
+                                   unsigned int * nnz_per_row){
+  unsigned int s = blockIdx.x * blockDim.x + threadIdx.x;
+  if(s >= N_SPATIAL) return;
+  const unsigned int * row = hist + (size_t)s * K;
+  unsigned int cnt = 0;
+  for(unsigned int k = 0; k < K; k++) if(row[k]) cnt++;
+  nnz_per_row[s] = cnt;
+}
+
+__global__ void tab_sparsify_write(const unsigned int * hist,
+                                   unsigned int N_SPATIAL,
+                                   unsigned int K,
+                                   const unsigned int * row_offsets,
+                                   unsigned short * tids,
+                                   unsigned int * cnts){
+  unsigned int s = blockIdx.x * blockDim.x + threadIdx.x;
+  if(s >= N_SPATIAL) return;
+  unsigned int pos = row_offsets[s];
+  const unsigned int * row = hist + (size_t)s * K;
+  for(unsigned int k = 0; k < K; k++){
+    unsigned int c = row[k];
+    if(c){
+      tids[pos] = (unsigned short)k;
+      cnts[pos] = c;
+      pos++;
+    }
+  }
+}
+#endif

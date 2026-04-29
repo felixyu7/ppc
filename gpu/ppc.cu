@@ -56,19 +56,16 @@ namespace xppc{
       d.tab_perp2[1]=d.tab_dir[2]*d.tab_perp[0]-d.tab_dir[0]*d.tab_perp[2];
       d.tab_perp2[2]=d.tab_dir[0]*d.tab_perp[1]-d.tab_dir[1]*d.tab_perp[0];
     }
-    // 4D bin counts
-    ev=getenv("TAB_N_RHO");   d.tab_n_rho=ev?atoi(ev):100;
-    ev=getenv("TAB_N_PHI");   d.tab_n_phi=ev?atoi(ev):36;
-    ev=getenv("TAB_N_L");     d.tab_n_l=ev?atoi(ev):80;
-    ev=getenv("TAB_N_T");     d.tab_n_t=ev?atoi(ev):105;
-    // Bin ranges
-    ev=getenv("TAB_RHO_MAX");   d.tab_rho_max=ev?atof(ev):580;
-    ev=getenv("TAB_RHO_POWER"); d.tab_rho_power=ev?atof(ev):2;
+    // Spatial-bin counts and ranges
+    ev=getenv("TAB_N_RHO");   d.tab_n_rho=ev?atoi(ev):64;
+    ev=getenv("TAB_N_PHI");   d.tab_n_phi=ev?atoi(ev):16;
+    ev=getenv("TAB_N_L");     d.tab_n_l=ev?atoi(ev):64;
+    ev=getenv("TAB_RHO_MAX");   d.tab_rho_max=ev?atof(ev):500;
+    ev=getenv("TAB_RHO_POWER"); d.tab_rho_power=ev?atof(ev):3;
     ev=getenv("TAB_PHI_MAX"); d.tab_phi_max=ev?atof(ev):2*M_PI;
     ev=getenv("TAB_L_MIN");   d.tab_l_min=ev?atof(ev):-500;
     ev=getenv("TAB_L_MAX");   d.tab_l_max=ev?atof(ev):500;
-    ev=getenv("TAB_T_MAX");     d.tab_t_max=ev?atof(ev):7000;
-    ev=getenv("TAB_T_POWER");   d.tab_t_power=ev?atof(ev):2;
+    ev=getenv("TAB_T_MAX");   d.tab_t_max=ev?atof(ev):7000;
     // Strict-physics geometric-time coefficients from the ice model
     // (mid-wavelength). Decomposes t_geo = l*ocv + rho*((ocm-coschr*ocv)/sinchr).
     {
@@ -77,31 +74,28 @@ namespace xppc{
       d.tab_t_geo_l=d.ocv;
       d.tab_t_geo_r=(ocm-coschr*d.ocv)/sinchr;
     }
-#ifdef TABULATE_RAW
-    ev=getenv("TAB_BUF_MAX"); d.tab_buf_max=ev?(unsigned int)atoll(ev):100000000u;
-    ev=getenv("TAB_SUBSAMPLE_PROB"); d.tab_subsample_prob=ev?(float)atof(ev):1.0f;
-    if(d.tab_subsample_prob<=0.0f || d.tab_subsample_prob>1.0f){
-      cerr<<"Error: TAB_SUBSAMPLE_PROB must be in (0, 1], got "
-          <<d.tab_subsample_prob<<endl;
-      exit(2);
+    ev=getenv("TAB_K"); d.tab_n_t_bins=ev?atoi(ev):512;
+    ev=getenv("TAB_TAU"); d.tab_tau=ev?(float)atof(ev):1.0f;
+    if(d.tab_tau<=0.0f){
+      cerr<<"Error: TAB_TAU must be > 0, got "<<d.tab_tau<<endl; exit(2);
     }
-    cerr<<"Tabulation (RAW): "<<d.tab_n_rho<<"x"<<d.tab_n_phi<<"x"<<d.tab_n_l
-        <<" spatial bins, photon-list buffer="<<d.tab_buf_max<<" records ("
-        <<((unsigned long long)d.tab_buf_max*sizeof(tab_record))<<" bytes)"<<endl
-        <<"  subsample_prob="<<d.tab_subsample_prob<<" rho_max="<<d.tab_rho_max
-        <<" l=["<<d.tab_l_min<<","<<d.tab_l_max<<"] t_max="<<d.tab_t_max
-        <<" t_geo_l="<<d.tab_t_geo_l<<" t_geo_r="<<d.tab_t_geo_r<<endl;
-#else
-    d.tab_n_bins=d.tab_n_rho*d.tab_n_phi*d.tab_n_l*d.tab_n_t;
-    cerr<<"Tabulation: "<<d.tab_n_rho<<"x"<<d.tab_n_phi<<"x"<<d.tab_n_l<<"x"<<d.tab_n_t<<"="<<d.tab_n_bins<<" bins"
-        <<" rho_max="<<d.tab_rho_max<<" l=["<<d.tab_l_min<<","<<d.tab_l_max<<"] t_max="<<d.tab_t_max
-        <<" t_geo_l="<<d.tab_t_geo_l<<" t_geo_r="<<d.tab_t_geo_r<<endl;
-#endif
+    if(d.tab_n_t_bins<=0 || d.tab_n_t_bins>65536){
+      cerr<<"Error: TAB_K must be in (0, 65536], got "<<d.tab_n_t_bins<<endl; exit(2);
+    }
+    d.tab_inv_log1p_T=1.0f/log1pf(d.tab_t_max/d.tab_tau);
+    {
+      unsigned long long n_spatial=(unsigned long long)d.tab_n_rho*d.tab_n_phi*d.tab_n_l;
+      unsigned long long mem=n_spatial*d.tab_n_t_bins*sizeof(unsigned int);
+      cerr<<"Tabulation: "<<d.tab_n_rho<<"x"<<d.tab_n_phi<<"x"<<d.tab_n_l
+          <<" = "<<n_spatial<<" spatial bins, K="<<d.tab_n_t_bins
+          <<" log1p time bins, dense buffer "<<mem<<" bytes"<<endl
+          <<"  τ="<<d.tab_tau<<" t_max="<<d.tab_t_max
+          <<" inv_log1p_T="<<d.tab_inv_log1p_T
+          <<" rho_max="<<d.tab_rho_max
+          <<" l=["<<d.tab_l_min<<","<<d.tab_l_max<<"]"
+          <<" t_geo_l="<<d.tab_t_geo_l<<" t_geo_r="<<d.tab_t_geo_r<<endl;
+    }
   }
-#ifndef TABULATE_RAW
-  float * tab_hist_host=NULL;
-#endif
-  void tab_finalize_histogram();
   void tab_reset_histogram();
   void tab_print_histogram();
   void tab_set_source(float sx, float sy, float sz, float dx, float dy, float dz);
@@ -144,17 +138,12 @@ namespace xppc{
     }
 
 #ifdef TABULATE
-#ifdef TABULATE_RAW
     {
-      d.tab_buf=new tab_record[d.tab_buf_max];
-      d.tab_buf_count=new unsigned int(0);
+      unsigned long long n_cells=(unsigned long long)d.tab_n_rho*d.tab_n_phi
+                                 *d.tab_n_l*d.tab_n_t_bins;
+      d.tab_hist_st=new unsigned int[n_cells];
+      memset(d.tab_hist_st, 0, n_cells*sizeof(unsigned int));
     }
-#else
-    {
-      d.tab_hist=new float[d.tab_n_bins];
-      memset(d.tab_hist, 0, d.tab_n_bins*sizeof(float));
-    }
-#endif
 #endif
 
     {
@@ -168,12 +157,7 @@ namespace xppc{
     delete d.hits;
     delete d.bf;
 #ifdef TABULATE
-#ifdef TABULATE_RAW
-    delete[] d.tab_buf;
-    delete d.tab_buf_count;
-#else
-    delete[] d.tab_hist;
-#endif
+    delete[] d.tab_hist_st;
 #endif
   }
 
@@ -321,23 +305,14 @@ namespace xppc{
       }
 
 #ifdef TABULATE
-#ifdef TABULATE_RAW
       {
-	unsigned long size=(unsigned long)d.tab_buf_max*sizeof(tab_record); tot+=size;
-	checkError(cudaMalloc((void**) &d.tab_buf, size));
-	checkError(cudaMalloc((void**) &d.tab_buf_count, sizeof(unsigned int)));
-	checkError(cudaMemset(d.tab_buf_count, 0, sizeof(unsigned int)));
-	tot+=sizeof(unsigned int);
-	cerr<<"Tabulation (RAW) buffer: "<<d.tab_buf_max<<" records ("<<size<<" bytes)"<<endl;
+	unsigned long long n_cells=(unsigned long long)d.tab_n_rho*d.tab_n_phi
+	                          *d.tab_n_l*d.tab_n_t_bins;
+	unsigned long size=(unsigned long)(n_cells*sizeof(unsigned int)); tot+=size;
+	checkError(cudaMalloc((void**) &d.tab_hist_st, size));
+	checkError(cudaMemset(d.tab_hist_st, 0, size));
+	cerr<<"Tabulation buffer: "<<n_cells<<" uint32 cells ("<<size<<" bytes)"<<endl;
       }
-#else
-      {
-	unsigned long size=(unsigned long)d.tab_n_bins*sizeof(float); tot+=size;
-	checkError(cudaMalloc((void**) &d.tab_hist, size));
-	checkError(cudaMemset(d.tab_hist, 0, size));
-	cerr<<"Tabulation histogram: "<<d.tab_n_bins<<" bins ("<<size<<" bytes)"<<endl;
-      }
-#endif
 #endif
 
       {
@@ -356,12 +331,7 @@ namespace xppc{
       checkError(cudaFree(d.bf));
       checkError(cudaFree(d.oms));
 #ifdef TABULATE
-#ifdef TABULATE_RAW
-      checkError(cudaFree(d.tab_buf));
-      checkError(cudaFree(d.tab_buf_count));
-#else
-      checkError(cudaFree(d.tab_hist));
-#endif
+      checkError(cudaFree(d.tab_hist_st));
 #endif
       checkError(cudaFree(e));
       checkError(cudaEventDestroy(evt1));
@@ -549,114 +519,180 @@ namespace xppc{
 #endif
 
 #ifdef TABULATE
-#ifdef TABULATE_RAW
-  void tab_finalize_histogram(){ /* unused under TABULATE_RAW */ }
+  // Sparse CSR wire format (matches neural_ppc.data.encode_sparse_hist
+  // pre-zstd layout, so the Python writer can pass it through directly):
+  //   [uint32 magic 0xC0DEC0FE][uint32 n_occ]
+  //   [uint32 × n_occ] spatial_idx (sorted ascending)
+  //   [uint32 × n_occ] nnz_per_cell
+  //   [uint16 × nnz_total] time_ids
+  //   [uint32 × nnz_total] time_counts
+  //
+  // For CUDA, the dense [N_SPATIAL × K] device histogram is sparsified
+  // on-device (`tab_sparsify_count` + `tab_sparsify_write` in pro.cu), so
+  // only the small CSR arrays are copied D2H — no dense GPU→host transfer
+  // and no dense host scan. Multi-GPU outputs are merged per row on host.
   void tab_print_histogram(){
-    // Concatenate per-GPU photon-list buffers; emit
-    //   uint32 n_records ; n_records × (int32 idx, float32 t_res)
-    // packed AoS — matches the host-side struct tab_record layout.
-    unsigned int counts[64];
-    unsigned int total=0;
-    int n_gpu;
-#ifndef XCPU
-    n_gpu=(int)gpus.size();
-    for(int gi=0; gi<n_gpu; gi++){
-      gpus[gi].set();
-      unsigned int c;
-      checkError(cudaMemcpy(&c, gpus[gi].d.tab_buf_count,
-                            sizeof(unsigned int), cudaMemcpyDeviceToHost));
-      if(c>d.tab_buf_max){
-        cerr<<"Error: tab_buf overflow on GPU "<<gi<<": "<<c<<" > "
-            <<d.tab_buf_max<<" — refusing to emit truncated cache. "
-            "Raise TAB_BUF_MAX or lower TAB_SUBSAMPLE_PROB."<<endl;
-        exit(1);
-      }
-      counts[gi]=c; total+=c;
-    }
-#else
-    n_gpu=1;
+    unsigned int magic=0xC0DEC0FE;
+    unsigned int K=(unsigned int)d.tab_n_t_bins;
+    unsigned int N_SPATIAL=(unsigned int)(d.tab_n_rho*d.tab_n_phi*d.tab_n_l);
+
+    vector<unsigned int> occ;
+    vector<unsigned int> nnz_per_cell;
+    vector<unsigned short> time_ids;
+    vector<unsigned int> time_counts;
+
+#ifdef XCPU
     {
-      unsigned int c=*d.tab_buf_count;
-      if(c>d.tab_buf_max){
-        cerr<<"Error: tab_buf overflow: "<<c<<" > "<<d.tab_buf_max
-            <<" — refusing to emit truncated cache. "
-            "Raise TAB_BUF_MAX or lower TAB_SUBSAMPLE_PROB."<<endl;
-        exit(1);
+      const unsigned int * hist = d.tab_hist_st;
+      for(unsigned int s=0; s<N_SPATIAL; s++){
+        const unsigned int * row = hist + (size_t)s * K;
+        unsigned int row_nnz=0;
+        for(unsigned int k=0; k<K; k++) if(row[k]) row_nnz++;
+        if(row_nnz==0) continue;
+        occ.push_back(s);
+        nnz_per_cell.push_back(row_nnz);
+        for(unsigned int k=0; k<K; k++) if(row[k]){
+          time_ids.push_back((unsigned short)k);
+          time_counts.push_back(row[k]);
+        }
       }
-      counts[0]=c; total=c;
+    }
+#else
+    struct PerGpu {
+      vector<unsigned int> nnz_per_row;     // [N_SPATIAL]
+      vector<unsigned int> row_offsets;     // [N_SPATIAL+1]
+      vector<unsigned short> tids;          // [total_nnz]
+      vector<unsigned int> cnts;            // [total_nnz]
+    };
+    vector<PerGpu> per_gpu(gpus.size());
+    const unsigned int block=128;
+    const unsigned int grid=(N_SPATIAL+block-1)/block;
+
+    for(size_t gi=0; gi<gpus.size(); gi++){
+      gpus[gi].set();
+      PerGpu & pg = per_gpu[gi];
+      pg.nnz_per_row.resize(N_SPATIAL);
+      pg.row_offsets.resize(N_SPATIAL+1);
+
+      unsigned int * d_nnz_per_row=NULL;
+      checkError(cudaMalloc((void**)&d_nnz_per_row,
+                            N_SPATIAL*sizeof(unsigned int)));
+      tab_sparsify_count<<<grid, block>>>(
+        gpus[gi].d.tab_hist_st, N_SPATIAL, K, d_nnz_per_row);
+      checkError(cudaMemcpy(pg.nnz_per_row.data(), d_nnz_per_row,
+                            N_SPATIAL*sizeof(unsigned int),
+                            cudaMemcpyDeviceToHost));
+
+      unsigned int total_nnz=0;
+      for(unsigned int s=0; s<N_SPATIAL; s++){
+        pg.row_offsets[s] = total_nnz;
+        total_nnz += pg.nnz_per_row[s];
+      }
+      pg.row_offsets[N_SPATIAL] = total_nnz;
+
+      if(total_nnz>0){
+        unsigned int * d_row_offsets=NULL;
+        unsigned short * d_tids=NULL;
+        unsigned int * d_cnts=NULL;
+        checkError(cudaMalloc((void**)&d_row_offsets,
+                              (N_SPATIAL+1)*sizeof(unsigned int)));
+        checkError(cudaMemcpy(d_row_offsets, pg.row_offsets.data(),
+                              (N_SPATIAL+1)*sizeof(unsigned int),
+                              cudaMemcpyHostToDevice));
+        checkError(cudaMalloc((void**)&d_tids, total_nnz*sizeof(unsigned short)));
+        checkError(cudaMalloc((void**)&d_cnts, total_nnz*sizeof(unsigned int)));
+        tab_sparsify_write<<<grid, block>>>(
+          gpus[gi].d.tab_hist_st, N_SPATIAL, K, d_row_offsets, d_tids, d_cnts);
+        pg.tids.resize(total_nnz);
+        pg.cnts.resize(total_nnz);
+        checkError(cudaMemcpy(pg.tids.data(), d_tids,
+                              total_nnz*sizeof(unsigned short),
+                              cudaMemcpyDeviceToHost));
+        checkError(cudaMemcpy(pg.cnts.data(), d_cnts,
+                              total_nnz*sizeof(unsigned int),
+                              cudaMemcpyDeviceToHost));
+        checkError(cudaFree(d_tids));
+        checkError(cudaFree(d_cnts));
+        checkError(cudaFree(d_row_offsets));
+      }
+      checkError(cudaFree(d_nnz_per_row));
+    }
+
+    if(per_gpu.size()==1){
+      // Single-GPU fast path: no merge needed.
+      const PerGpu & pg = per_gpu[0];
+      for(unsigned int s=0; s<N_SPATIAL; s++){
+        unsigned int n = pg.nnz_per_row[s];
+        if(n==0) continue;
+        occ.push_back(s);
+        nnz_per_cell.push_back(n);
+      }
+      time_ids = pg.tids;
+      time_counts = pg.cnts;
+    } else {
+      // Per-row k-way merge with sums on collisions. Per-GPU rows are
+      // already sorted by time_id ascending.
+      vector<unsigned int> heads(per_gpu.size());
+      vector<unsigned int> ends(per_gpu.size());
+      for(unsigned int s=0; s<N_SPATIAL; s++){
+        unsigned int row_start = (unsigned int)time_ids.size();
+        for(size_t g=0; g<per_gpu.size(); g++){
+          heads[g] = per_gpu[g].row_offsets[s];
+          ends[g]  = per_gpu[g].row_offsets[s+1];
+        }
+        while(true){
+          unsigned int min_tid = 0xFFFFFFFFu;
+          for(size_t g=0; g<per_gpu.size(); g++){
+            if(heads[g] < ends[g]){
+              unsigned int t = per_gpu[g].tids[heads[g]];
+              if(t < min_tid) min_tid = t;
+            }
+          }
+          if(min_tid > 65535u) break;
+          unsigned int sum = 0;
+          for(size_t g=0; g<per_gpu.size(); g++){
+            if(heads[g] < ends[g] &&
+               per_gpu[g].tids[heads[g]] == (unsigned short)min_tid){
+              sum += per_gpu[g].cnts[heads[g]];
+              heads[g]++;
+            }
+          }
+          time_ids.push_back((unsigned short)min_tid);
+          time_counts.push_back(sum);
+        }
+        unsigned int row_nnz = (unsigned int)time_ids.size() - row_start;
+        if(row_nnz>0){
+          occ.push_back(s);
+          nnz_per_cell.push_back(row_nnz);
+        }
+      }
     }
 #endif
-    fwrite(&total, sizeof(unsigned int), 1, stdout);
-    for(int gi=0; gi<n_gpu; gi++){
-      unsigned int c=counts[gi];
-      if(c==0) continue;
-      tab_record * host_buf=new tab_record[c];
-#ifndef XCPU
-      gpus[gi].set();
-      checkError(cudaMemcpy(host_buf, gpus[gi].d.tab_buf,
-                            (size_t)c*sizeof(tab_record), cudaMemcpyDeviceToHost));
-#else
-      memcpy(host_buf, d.tab_buf, (size_t)c*sizeof(tab_record));
-#endif
-      fwrite(host_buf, sizeof(tab_record), c, stdout);
-      delete[] host_buf;
+
+    unsigned int n_occ=(unsigned int)occ.size();
+    fwrite(&magic, sizeof(unsigned int), 1, stdout);
+    fwrite(&n_occ, sizeof(unsigned int), 1, stdout);
+    if(n_occ>0){
+      fwrite(occ.data(), sizeof(unsigned int), n_occ, stdout);
+      fwrite(nnz_per_cell.data(), sizeof(unsigned int), n_occ, stdout);
+      fwrite(time_ids.data(), sizeof(unsigned short), time_ids.size(), stdout);
+      fwrite(time_counts.data(), sizeof(unsigned int), time_counts.size(), stdout);
     }
     fflush(stdout);
   }
   void tab_reset_histogram(){
+    unsigned long long n_cells=(unsigned long long)d.tab_n_rho*d.tab_n_phi
+                              *d.tab_n_l*d.tab_n_t_bins;
+    unsigned long bytes=(unsigned long)(n_cells*sizeof(unsigned int));
 #ifndef XCPU
     for(size_t gi=0; gi<gpus.size(); gi++){
       gpus[gi].set();
-      checkError(cudaMemset(gpus[gi].d.tab_buf_count, 0, sizeof(unsigned int)));
+      checkError(cudaMemset(gpus[gi].d.tab_hist_st, 0, bytes));
     }
 #else
-    *d.tab_buf_count=0;
+    memset(d.tab_hist_st, 0, bytes);
 #endif
   }
-#else
-  void tab_finalize_histogram(){
-    if(!tab_hist_host) tab_hist_host=new float[d.tab_n_bins];
-    memset(tab_hist_host, 0, d.tab_n_bins*sizeof(float));
-#ifndef XCPU
-    float * tab_hist_gpu=new float[d.tab_n_bins];
-    for(size_t gi=0; gi<gpus.size(); gi++){
-      gpus[gi].set();
-      checkError(cudaMemcpy(tab_hist_gpu, gpus[gi].d.tab_hist,
-                 d.tab_n_bins*sizeof(float), cudaMemcpyDeviceToHost));
-      for(int i=0; i<d.tab_n_bins; i++) tab_hist_host[i]+=tab_hist_gpu[i];
-    }
-    delete[] tab_hist_gpu;
-#else
-    memcpy(tab_hist_host, d.tab_hist, d.tab_n_bins*sizeof(float));
-#endif
-  }
-  void tab_print_histogram(){
-    tab_finalize_histogram();
-    // Binary output: uint32 n_nnz, then n_nnz × (int32 flat_idx, float32 value)
-    unsigned int n_nnz=0;
-    for(int i=0; i<d.tab_n_bins; i++) if(tab_hist_host[i]>0) n_nnz++;
-    fwrite(&n_nnz, sizeof(unsigned int), 1, stdout);
-    for(int i=0; i<d.tab_n_bins; i++){
-      if(tab_hist_host[i]>0){
-        int idx=i;
-        float val=tab_hist_host[i];
-        fwrite(&idx, sizeof(int), 1, stdout);
-        fwrite(&val, sizeof(float), 1, stdout);
-      }
-    }
-    fflush(stdout);
-  }
-  void tab_reset_histogram(){
-#ifndef XCPU
-    for(size_t gi=0; gi<gpus.size(); gi++){
-      gpus[gi].set();
-      checkError(cudaMemset(gpus[gi].d.tab_hist, 0, d.tab_n_bins*sizeof(float)));
-    }
-#else
-    memset(d.tab_hist, 0, d.tab_n_bins*sizeof(float));
-#endif
-  }
-#endif
   void tab_set_source(float sx, float sy, float sz, float dx, float dy, float dz){
     d.tab_src[0]=sx; d.tab_src[1]=sy; d.tab_src[2]=sz;
     d.tab_dir[0]=dx; d.tab_dir[1]=dy; d.tab_dir[2]=dz;

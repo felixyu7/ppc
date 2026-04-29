@@ -449,13 +449,6 @@ struct datz{
   unsigned long long rs[MAXRND];
 } z;
 
-#ifdef TABULATE_RAW
-struct tab_record {
-  int idx;     // i_rho + n_rho*(i_phi + n_phi*i_l)
-  float t;     // t_res in ns
-};
-#endif
-
 struct dats{
   unsigned int hidx;
 
@@ -518,30 +511,29 @@ struct dats{
   line sc[NSTR];
 
 #ifdef TABULATE
-  // Track-frame 4D tabulation: (rho, phi, l, t_res)
+  // Track-frame sparse-histogram tabulation (cache_v3):
   //   rho   perpendicular distance from track axis
   //   phi   track-frame azimuth (reference = ẑ_ice projected ⊥ d̂)
   //   l     signed along-track distance, l = (hit - src) · d̂
   //   t_res photon arrival time minus Cherenkov ballistic offset
+  // Per-photon counts atomicAdd directly into a dense [N_SPATIAL × K]
+  // uint32 histogram; the host sparsifies and zstd-compresses per config.
+  // No subsampling.
   float tab_src[3];    // source position (x, y, z) in PPC coords
   float tab_dir[3];    // source direction (unit vector)
   float tab_perp[3];   // perpendicular reference direction for phi (CLSim perpDir)
   float tab_perp2[3];  // second perp direction: tab_dir × tab_perp
 
-  // 4D bin counts
-  int tab_n_rho;       // rho bins (default 100, PowerAxis p=2)
-  int tab_n_phi;       // phi bins (default 36, Linear [0, 2*pi])
-  int tab_n_l;         // l bins (default 80, Linear [-500, 500])
-  int tab_n_t;         // time bins (default 105, PowerAxis p=2)
-
-  // Bin ranges
-  float tab_rho_max;   // max rho (m), default 580
-  float tab_rho_power; // power for rho binning, default 2
-  float tab_phi_max;   // max phi (rad), default 2*pi
+  // Spatial binning (set by env vars at startup)
+  int tab_n_rho;       // rho bins (default 64, PowerAxis p=3)
+  int tab_n_phi;       // phi bins (default 16, Linear [0, 2π])
+  int tab_n_l;         // l bins (default 64, Linear [-500, 500])
+  float tab_rho_max;   // max rho (m), default 500
+  float tab_rho_power; // power for rho binning, default 3
+  float tab_phi_max;   // max phi (rad), default 2π
   float tab_l_min;     // min l (m), default -500
   float tab_l_max;     // max l (m), default 500
   float tab_t_max;     // max time residual (ns), default 7000
-  float tab_t_power;   // power for time binning, default 2
 
   // Strict-physics geometric-time decomposition coefficients:
   //   t_geo = l * tab_t_geo_l + rho * tab_t_geo_r
@@ -551,27 +543,13 @@ struct dats{
   float tab_t_geo_l;    // ns/m of l        = 1 / c_vac
   float tab_t_geo_r;    // ns/m of rho      = (n_g - cos θ_c) / (sin θ_c · c_vac)
 
-#ifdef TABULATE_RAW
-  // Photon-list emit. Each retained sub-step sample is appended as one
-  // 8-byte record (int32 spatial_idx, float32 t_res_ns); spatial_idx is
-  // i_rho + n_rho*(i_phi + n_phi*i_l) — t-axis is unbinned in this mode.
-  // tab_buf_count is a *pointer* to a single uint in global memory: the
-  // struct itself is copied into __shared__ at kernel start (see pro.cu),
-  // so a plain `unsigned int` field would shadow per-block instead of
-  // counting globally — same pointer trick as tab_buf.
-  // tab_subsample_prob: Bernoulli acceptance applied per sub-step; PPC's
-  // TABULATE samples photon trajectories every ~1 m, which (without
-  // thinning) produces ~10^10 records per config. The kernel learns
-  // p · Λ; the matching factor of p is folded into the exposure at
-  // training time.
-  float tab_subsample_prob;     // Bernoulli p ∈ (0, 1]
-  unsigned int tab_buf_max;     // capacity (records)
-  unsigned int * tab_buf_count; // device ptr → single uint, atomic write head
-  tab_record * tab_buf;         // [tab_buf_max] photon records (device ptr)
-#else
-  int tab_n_bins;      // total = n_rho * n_phi * n_l * n_t
-  float * tab_hist;    // histogram buffer [tab_n_bins], float atomicAdd
-#endif
+  // Time binning via log1p:
+  //   y = log1p(t_res / τ) / log1p(T_max / τ)         ∈ [0, 1)
+  //   i_t = floor(y · K), clamped to [0, K-1]
+  int tab_n_t_bins;             // K (default 512)
+  float tab_tau;                // log1p scale (ns), default 1.0
+  float tab_inv_log1p_T;        // 1 / log1p(T_max / τ), precomputed on host
+  unsigned int * tab_hist_st;   // device ptr → [N_SPATIAL × K] uint32 hist
 #endif
 
   datz * z;
