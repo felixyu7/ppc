@@ -1,0 +1,4 @@
+gpu/ppc
+gpu/ppc_tab_hist
+gpu/ppc.o
+gpu/libxppc.so

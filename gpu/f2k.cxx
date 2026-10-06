@@ -260,7 +260,7 @@ void print(){
     for(; (int) ( flnb - h.n ) < 0; flnb++){
 #ifdef XLIB
       tmph.track=flnz.front();
-#else
+#elif !defined(TABULATE)
       cout<<flnz.front()<<endl;
 #endif
       flnz.pop_front();
@@ -355,7 +355,7 @@ void print(){
   for(; (int) ( flnb - flnd ) < 0; flnb++){
 #ifdef XLIB
     tmph.track=flnz.front();
-#else
+#elif !defined(TABULATE)
     cout<<flnz.front()<<endl;
 #endif
     flnz.pop_front();
@@ -576,9 +576,23 @@ void f2k(){
       else if(0==strcmp(name, "ph")) addf(x, y, z, t, E);
       if(type>=0) addp(x, y, z, t, E, l, type);
     }
+#ifdef TABULATE
+    else{
+      float sx, sy, sz, dx, dy, dz;
+      if(sscanf(in.c_str(), "TAB %f %f %f %f %f %f", &sx, &sy, &sz, &dx, &dy, &dz)==6){
+        eout();
+        tab_print_histogram();
+        tab_reset_histogram();
+        tab_set_source(sx, sy, sz, dx, dy, dz);
+      }
+    }
+#endif
   }
   eout();
 
+#ifdef TABULATE
+  tab_print_histogram();
+#endif
   fin();
 }
 #endif

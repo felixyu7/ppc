@@ -571,6 +571,71 @@ __global__ void propagate(dats * ed, unsigned int num){
       if(tot<sca) sca=tot, tot=0; else tot=(tot-sca)*w->z[J].abs;
     }
 
+#ifdef TABULATE
+    // Track-frame tabulation: sub-sample every tab_step m along the photon
+    // path into the 4D histogram (rho, phi, l, t_res). No DOM / hole-ice
+    // intersection: advance the full scatter step, then scatter as usual.
+    om=-1;
+    // no DOM / hole-ice cut: read by the birefringence and scatter blocks below
+    float del=sca, hi=sca, fin=sca;
+    bool hole=false;
+    {
+      // Random per-segment phase (jittered sampling) is unbiased at all
+      // scales; fixed STEP/2 phase stamps sample rings near the source.
+      float dd0=e.tab_rand_phase ? e.tab_step*xrnd(s) : e.tab_step*0.5f;
+      for(float dd=dd0; dd<sca; dd+=e.tab_step){
+        float dx=r.x+dd*n.x-e.tab_src[0];
+        float dy=r.y+dd*n.y-e.tab_src[1];
+        float dz=r.z+dd*n.z-e.tab_src[2];
+        float st=r.w+dd*n.w;
+
+        // l = signed along-track distance, rho = distance from track axis
+        float l=dx*e.tab_dir[0]+dy*e.tab_dir[1]+dz*e.tab_dir[2];
+        float px=dx-l*e.tab_dir[0];
+        float py=dy-l*e.tab_dir[1];
+        float pz=dz-l*e.tab_dir[2];
+        float rho=sqrtf(px*px+py*py+pz*pz);
+
+        // t_res = t - t_geo + t_pad (t_geo: muon at c_vac along l,
+        // Cherenkov leg at mid-wavelength v_g); pad keeps light ahead of
+        // the anchor above the >= 0 gate.
+        float t_res=st-(l*e.tab_t_geo_l + rho*e.tab_t_geo_r)+e.tab_t_pad;
+
+        if(!(rho>0 && rho<e.tab_rho_max &&
+             l>=e.tab_l_min && l<=e.tab_l_max &&
+             t_res>=0 && t_res<e.tab_t_max)) continue;
+
+        float phi=0;
+        if(rho>1e-6f){
+          float cosph=(px*e.tab_perp[0]+py*e.tab_perp[1]+pz*e.tab_perp[2])/rho;
+          float sinph=(px*e.tab_perp2[0]+py*e.tab_perp2[1]+pz*e.tab_perp2[2])/rho;
+          phi=atan2f(sinph, cosph);
+          if(phi<0) phi+=2.0f*FPI;
+        }
+
+        // Feature-uniform spatial warps (see tab_init)
+        float y_rho=log1pf(rho/e.tab_rho0)*e.tab_inv_log1p_rho;
+        int i_rho=min(max(__float2int_rd(y_rho*e.tab_n_rho),0),e.tab_n_rho-1);
+        int i_phi=min(max(__float2int_rd(phi/e.tab_phi_max*e.tab_n_phi),0),e.tab_n_phi-1);
+        float y_l=(asinhf(l/e.tab_l0)-e.tab_asinh_l_lo)*e.tab_inv_asinh_l;
+        int i_l=min(max(__float2int_rd(y_l*e.tab_n_l),0),e.tab_n_l-1);
+
+        // asinh time bin about the anchor (causal front at t_res = t_pad)
+        float y=(asinhf((t_res-e.tab_t_pad)*e.tab_inv_t_scale)-e.tab_y0)
+                *e.tab_inv_yspan;
+        int i_t=min(max(__float2int_rd(y*e.tab_n_t_bins),0),e.tab_n_t_bins-1);
+        int spatial_idx=i_rho+e.tab_n_rho*(i_phi+e.tab_n_phi*i_l);
+        // 64-bit flat index: K * N_SPATIAL can exceed 2^31.
+        atomicAdd(&e.tab_hist_st[(size_t)spatial_idx*e.tab_n_t_bins+i_t], 1u);
+      }
+
+      r.x+=sca*n.x;
+      r.y+=sca*n.y;
+      r.z+=sca*n.z;
+      r.w+=sca*n.w;
+    }
+    SCA=0, TOT=tot*nr;
+#else
     om=-1;
     float del=sca;
     float hi=sca, hf=0;
@@ -723,6 +788,7 @@ __global__ void propagate(dats * ed, unsigned int num){
       r.z+=del*n.z;
       r.w+=del*n.w;
     }
+#endif // TABULATE
 
 #ifndef XCPU
     if(!isfinite(TOT) || !isfinite(SCA)) ed->bmp[atomicAdd(&ed->ab, 1)%4]=smid(), TOT=0, om=-1;
@@ -902,3 +968,39 @@ __global__ void propagate(dats * ed, unsigned int num){
   }
 
 }
+
+#if defined(TABULATE) && !defined(XCPU)
+// GPU-side sparsifier: one thread per spatial row; only the CSR arrays are
+// copied D2H. time_ids are ascending within each row.
+__global__ void tab_sparsify_count(const unsigned int * hist,
+                                   unsigned int N_SPATIAL,
+                                   unsigned int K,
+                                   unsigned int * nnz_per_row){
+  unsigned int s = blockIdx.x * blockDim.x + threadIdx.x;
+  if(s >= N_SPATIAL) return;
+  const unsigned int * row = hist + (size_t)s * K;
+  unsigned int cnt = 0;
+  for(unsigned int k = 0; k < K; k++) if(row[k]) cnt++;
+  nnz_per_row[s] = cnt;
+}
+
+__global__ void tab_sparsify_write(const unsigned int * hist,
+                                   unsigned int N_SPATIAL,
+                                   unsigned int K,
+                                   const unsigned int * row_offsets,
+                                   unsigned short * tids,
+                                   unsigned int * cnts){
+  unsigned int s = blockIdx.x * blockDim.x + threadIdx.x;
+  if(s >= N_SPATIAL) return;
+  unsigned int pos = row_offsets[s];
+  const unsigned int * row = hist + (size_t)s * K;
+  for(unsigned int k = 0; k < K; k++){
+    unsigned int c = row[k];
+    if(c){
+      tids[pos] = (unsigned short)k;
+      cnts[pos] = c;
+      pos++;
+    }
+  }
+}
+#endif

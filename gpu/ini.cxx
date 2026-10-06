@@ -23,7 +23,7 @@
 #define WNUM   512   // number of wavelength slices
 #define MAXLYS 172   // maximum number of ice layers
 #define MAXGEO 16384 // maximum number of OMs
-#define MAXRND 131072 // max. number of random number multipliers
+#define MAXRND 262144 // max. number of random number multipliers
 
 // #define DTMN
 #define XXX 1.e-5f
@@ -509,6 +509,72 @@ struct dats{
   float sum, bfr[12];
 
   line sc[NSTR];
+
+#ifdef TABULATE
+  // Track-frame sparse-histogram tabulation (cache_v3):
+  //   rho   perpendicular distance from track axis
+  //   phi   track-frame azimuth (reference = ẑ_ice projected ⊥ d̂)
+  //   l     signed along-track distance, l = (hit - src) · d̂
+  //   t_res photon arrival time minus Cherenkov ballistic offset
+  // Per-photon counts atomicAdd directly into a dense [N_SPATIAL × K]
+  // uint32 histogram; the host sparsifies and zstd-compresses per config.
+  // No subsampling.
+  float tab_src[3];    // source position (x, y, z) in PPC coords
+  float tab_dir[3];    // source direction (unit vector)
+  float tab_perp[3];   // perpendicular reference direction for phi (CLSim perpDir)
+  float tab_perp2[3];  // second perp direction: tab_dir × tab_perp
+
+  // Spatial binning (set by env vars at startup); rho and l use the
+  // feature-uniform warps rho ~ log1p(rho/rho0), l ~ asinh(l/l0).
+  int tab_n_rho;       // rho bins (default 64)
+  int tab_n_phi;       // phi bins (default 16, Linear [0, 2π])
+  int tab_n_l;         // l bins (default 64)
+  float tab_rho_max;   // max rho (m), default 500
+  float tab_rho0;          // rho log1p scale (m), default 5
+  float tab_inv_log1p_rho; // 1 / log1p(rho_max/rho0), host-precomputed
+  float tab_l0;            // l asinh scale (m), default 5
+  float tab_asinh_l_lo;    // asinh(l_min/l0)
+  float tab_inv_asinh_l;   // 1 / (asinh(l_max/l0) - asinh(l_min/l0))
+  float tab_phi_max;   // max phi (rad), default 2π
+  float tab_l_min;     // min l (m), default -500
+  float tab_l_max;     // max l (m), default 500
+  float tab_t_max;     // max time residual (ns), default 7000
+
+  // Strict-physics geometric-time decomposition coefficients:
+  //   t_geo = l * tab_t_geo_l + rho * tab_t_geo_r
+  // l-term: muon vacuum travel; R-term: Cherenkov in-medium leg minus
+  // saved muon path. See candela/constants.py for the closed
+  // form (n_g, cos θ_c, sin θ_c).
+  float tab_t_geo_l;    // ns/m of l        = 1 / c_vac
+  float tab_t_geo_r;    // ns/m of rho      = (n_g - cos θ_c) / (sin θ_c · c_vac)
+  // Support pad (ns): tables record t_res + pad, so light arriving up to
+  // pad ahead of the MID-wavelength direct cone (fast-wavelength direct
+  // photons, on-axis shower front) survives the t_res >= 0 gate instead of
+  // being silently dropped. Composition subtracts it back (ckpt meta t_pad).
+  float tab_t_pad;
+
+  // Path sub-sampling: step length (m) and phase. Fixed phase (STEP/2 from
+  // every segment start) is an unbiased path-length estimator only at
+  // scales >= STEP; for point sources it stamps Cherenkov-cone sample rings
+  // at rho = sin(θc)·(k+1/2)·STEP. Random per-segment phase is unbiased at
+  // ALL scales (jittered sampling) with no exposure renormalization.
+  float tab_step;       // sampling step (m), default 1.0 (CLSim VOLUME_MODE)
+  int tab_rand_phase;   // 1 = per-segment random phase, 0 = fixed STEP/2
+
+  // Time binning via asinh ABOUT THE GEOMETRIC ANCHOR. t_res below is the
+  // padded coordinate (physical residual + tab_t_pad), so the causal front
+  // sits at t_res = tab_t_pad and the finest bins land on it -- a log1p warp
+  // instead puts them at the empty floor of the pad, 8.7x coarser at the
+  // front where ~8% of the near-axis light lives in one bin.
+  //   y = (asinh((t_res - t_pad) / s) - y0) / (y1 - y0)   ∈ [0, 1)
+  //   i_t = floor(y · K), clamped to [0, K-1]
+  int tab_n_t_bins;             // K (default 512)
+  float tab_t_scale;            // asinh scale s (ns), default 0.5
+  float tab_inv_t_scale;        // 1 / s, precomputed on host
+  float tab_y0;                 // y0 = asinh(-t_pad / s)
+  float tab_inv_yspan;          // 1 / (asinh((T_max - t_pad) / s) - y0)
+  unsigned int * tab_hist_st;   // device ptr → [N_SPATIAL × K] uint32 hist
+#endif
 
   datz * z;
   hit * hits;

@@ -19,6 +19,7 @@ all:
 	@echo "	make co:   compile the ppc object code for CPU"
 	@echo "	make gpu:  compile the ppc  executable for GPU"
 	@echo "	make cpu:  compile the ppc  executable for CPU"
+	@echo "	make tab_hist: compile ppc_tab_hist (sparse track-frame histogram tabulation)"
 	@echo "	make glib: compile the libxppc library for GPU"
 	@echo "	make clib: compile the libxppc library for CPU"
 
@@ -27,6 +28,9 @@ go:
 
 gpu:
 	$(nvcc) -o ppc $(warn)
+
+tab_hist:
+	$(nvcc) -DTABULATE -o ppc_tab_hist $(warn)
 
 glib:
 	$(nvcc),$(mlib)
@@ -48,4 +52,4 @@ clib_osx:	link
 	$(gcpp) -fPIC -DXLIB -dynamic -dynamiclib -o libxppc.dylib
 
 clean:
-	rm ppc.o ppc libxppc.so ppc.cxx pro.cxx || true
+	rm ppc.o ppc ppc_tab_hist libxppc.so ppc.cxx pro.cxx || true
