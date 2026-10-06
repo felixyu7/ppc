@@ -100,6 +100,26 @@ namespace xppc{
     if(d.tab_n_t_bins<=0 || d.tab_n_t_bins>65536){
       cerr<<"Error: TAB_K must be in (0, 65536], got "<<d.tab_n_t_bins<<endl; exit(2);
     }
+    { // standard-DOM detection model (see pro.cu): standard OMs are type (-1,0)
+      itype & t=types[-1];
+      irde & mt=irdes[make_pair(-1,0)];
+      if(t.mas<=0 || t.s.size()>16 || mt.rat.size()!=WNUM || mt.rmax<=0){
+        cerr<<"Error: unsupported standard-DOM model (mas="<<t.mas<<", "<<t.s.size()
+            <<" as coefficients, "<<mt.rat.size()<<" RDE slices)"<<endl; exit(2);
+      }
+      d.tab_mas=t.mas; d.tab_nas=t.s.size();
+      for(int i=0; i<d.tab_nas; i++) d.tab_as[i]=t.s[i];
+      float avg=0;
+      for(int i=0; i<WNUM; i++) avg+=d.tab_rde[i]=mt.rat[i]/mt.rmax;
+      cerr<<"Tabulating standard-DOM hits: as.dat mas="<<t.mas<<" ("<<d.tab_nas
+          <<" coeffs), mean RDE/envelope="<<avg/WNUM;
+      for(map<pair<int,int>, irde>::iterator i=irdes.begin(); i!=irdes.end(); ++i)
+        if(i->first!=make_pair(-1,0) && i->second.rat.size()==WNUM){
+          float r=0; for(int k=0; k<WNUM; k++) r+=i->second.rat[k];
+          cerr<<"; OM class ("<<i->first.first<<","<<i->first.second<<") / standard = "<<r/avg;
+        }
+      cerr<<endl;
+    }
     d.tab_inv_t_scale=1.0f/d.tab_t_scale;
     d.tab_y0=asinhf(-d.tab_t_pad*d.tab_inv_t_scale);
     d.tab_inv_yspan=1.0f/(asinhf((d.tab_t_max-d.tab_t_pad)*d.tab_inv_t_scale)

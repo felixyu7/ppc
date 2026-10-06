@@ -574,6 +574,16 @@ struct dats{
   float tab_y0;                 // y0 = asinh(-t_pad / s)
   float tab_inv_yspan;          // 1 / (asinh((T_max - t_pad) / s) - y0)
   unsigned int * tab_hist_st;   // device ptr → [N_SPATIAL × K] uint32 hist
+
+  // Standard-DOM detection, applied per sub-sample exactly as PPC thins hits:
+  // p = tab_rde[wavelength slice] * A(n·z)/mas, A = as.dat polynomial in the
+  // photon direction's cosine to the default (upward) PMT-axis tilt. Tables
+  // are thus expected standard-DOM hits per unit cross section; both factors
+  // are 1 for uniform-acceptance ice (south_pole-style).
+  float tab_rde[WNUM];  // standard-DOM RDE / photon-envelope RDE per slice
+  float tab_as[16];     // as.dat coefficients s_0..s_{n-1}
+  int tab_nas;
+  float tab_mas;        // as.dat max sensitivity (first line)
 #endif
 
   datz * z;

@@ -583,6 +583,14 @@ __global__ void propagate(dats * ed, unsigned int num){
       // Random per-segment phase (jittered sampling) is unbiased at all
       // scales; fixed STEP/2 phase stamps sample rings near the source.
       float dd0=e.tab_rand_phase ? e.tab_step*xrnd(s) : e.tab_step*0.5f;
+
+      // Detection probability (fixed per segment: one wavelength, one direction)
+      float p_det;
+      {
+        float y=1, a=e.tab_as[0];
+        for(int i=1; i<e.tab_nas; i++){ y*=n.z; a+=e.tab_as[i]*y; }
+        p_det=e.tab_rde[w->wvl]*a/e.tab_mas;
+      }
       for(float dd=dd0; dd<sca; dd+=e.tab_step){
         float dx=r.x+dd*n.x-e.tab_src[0];
         float dy=r.y+dd*n.y-e.tab_src[1];
@@ -604,6 +612,7 @@ __global__ void propagate(dats * ed, unsigned int num){
         if(!(rho>0 && rho<e.tab_rho_max &&
              l>=e.tab_l_min && l<=e.tab_l_max &&
              t_res>=0 && t_res<e.tab_t_max)) continue;
+        if(p_det<1 && xrnd(s)>=p_det) continue; // binomial thinning keeps counts Poisson
 
         float phi=0;
         if(rho>1e-6f){
