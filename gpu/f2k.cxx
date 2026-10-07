@@ -582,7 +582,6 @@ void f2k(){
       if(sscanf(in.c_str(), "TAB %f %f %f %f %f %f", &sx, &sy, &sz, &dx, &dy, &dz)==6){
         eout();
         tab_print_histogram();
-        tab_reset_histogram();
         tab_set_source(sx, sy, sz, dx, dy, dz);
       }
     }

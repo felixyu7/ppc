@@ -569,21 +569,20 @@ struct dats{
   //   y = (asinh((t_res - t_pad) / s) - y0) / (y1 - y0)   ∈ [0, 1)
   //   i_t = floor(y · K), clamped to [0, K-1]
   int tab_n_t_bins;             // K (default 512)
+  // Direction axis: B uniform bins in cos(eta) = n.z (photon direction vs
+  // the upward PMT axis) folded into the row as i_eta*K + i_t, so rows are
+  // B*K wide. Angular acceptance is applied downstream, not here.
+  int tab_n_eta;                // B (default 1)
+  int tab_n_row;                // B*K
   float tab_t_scale;            // asinh scale s (ns), default 0.5
   float tab_inv_t_scale;        // 1 / s, precomputed on host
   float tab_y0;                 // y0 = asinh(-t_pad / s)
   float tab_inv_yspan;          // 1 / (asinh((T_max - t_pad) / s) - y0)
-  unsigned int * tab_hist_st;   // device ptr → [N_SPATIAL × K] uint32 hist
+  unsigned int * tab_hist_st;   // device ptr → [N_SPATIAL × B*K] uint32 hist
 
-  // Standard-DOM detection, applied per sub-sample exactly as PPC thins hits:
-  // p = tab_rde[wavelength slice] * A(n·z)/mas, A = as.dat polynomial in the
-  // photon direction's cosine to the default (upward) PMT-axis tilt. Tables
-  // are thus expected standard-DOM hits per unit cross section; both factors
-  // are 1 for uniform-acceptance ice (south_pole-style).
+  // Standard-DOM wavelength response, applied per sub-sample by binomial
+  // thinning p = tab_rde[wavelength slice] (1 for south_pole-style ice).
   float tab_rde[WNUM];  // standard-DOM RDE / photon-envelope RDE per slice
-  float tab_as[16];     // as.dat coefficients s_0..s_{n-1}
-  int tab_nas;
-  float tab_mas;        // as.dat max sensitivity (first line)
 #endif
 
   datz * z;
@@ -720,7 +719,10 @@ struct ini{
 	}
 
 	if(v.size()>=4){
-	  int xR=lroundf(v[0]); d.xR=xR; ovr*=xR*xR;
+	  int xR=lroundf(v[0]); d.xR=xR;
+#ifndef TABULATE
+	  ovr*=xR*xR; // oversize is a hit-finding trick; tables see every photon
+#endif
 	  q.eff=v[1], d.sf=v[2], d.g=v[3]; d.gr=(1-d.g)/(1+d.g);
 	  cerr<<"Configured: xR="<<xR<<" eff="<<q.eff<<" sf="<<d.sf<<" g="<<d.g<<endl;
 

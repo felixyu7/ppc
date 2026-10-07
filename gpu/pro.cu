@@ -584,13 +584,9 @@ __global__ void propagate(dats * ed, unsigned int num){
       // scales; fixed STEP/2 phase stamps sample rings near the source.
       float dd0=e.tab_rand_phase ? e.tab_step*xrnd(s) : e.tab_step*0.5f;
 
-      // Detection probability (fixed per segment: one wavelength, one direction)
-      float p_det;
-      {
-        float y=1, a=e.tab_as[0];
-        for(int i=1; i<e.tab_nas; i++){ y*=n.z; a+=e.tab_as[i]*y; }
-        p_det=e.tab_rde[w->wvl]*a/e.tab_mas;
-      }
+      // standard-DOM wavelength response, fixed per segment
+      float p_det=e.tab_rde[w->wvl];
+      int eta_off=e.tab_n_t_bins*min(max(__float2int_rd((n.z+1)*0.5f*e.tab_n_eta),0),e.tab_n_eta-1);
       for(float dd=dd0; dd<sca; dd+=e.tab_step){
         float dx=r.x+dd*n.x-e.tab_src[0];
         float dy=r.y+dd*n.y-e.tab_src[1];
@@ -634,8 +630,8 @@ __global__ void propagate(dats * ed, unsigned int num){
                 *e.tab_inv_yspan;
         int i_t=min(max(__float2int_rd(y*e.tab_n_t_bins),0),e.tab_n_t_bins-1);
         int spatial_idx=i_rho+e.tab_n_rho*(i_phi+e.tab_n_phi*i_l);
-        // 64-bit flat index: K * N_SPATIAL can exceed 2^31.
-        atomicAdd(&e.tab_hist_st[(size_t)spatial_idx*e.tab_n_t_bins+i_t], 1u);
+        // 64-bit flat index: B*K * N_SPATIAL can exceed 2^31.
+        atomicAdd(&e.tab_hist_st[(size_t)spatial_idx*e.tab_n_row+eta_off+i_t], 1u);
       }
 
       r.x+=sca*n.x;
@@ -979,37 +975,33 @@ __global__ void propagate(dats * ed, unsigned int num){
 }
 
 #if defined(TABULATE) && !defined(XCPU)
-// GPU-side sparsifier: one thread per spatial row; only the CSR arrays are
-// copied D2H. time_ids are ascending within each row.
-__global__ void tab_sparsify_count(const unsigned int * hist,
-                                   unsigned int N_SPATIAL,
-                                   unsigned int K,
-                                   unsigned int * nnz_per_row){
-  unsigned int s = blockIdx.x * blockDim.x + threadIdx.x;
-  if(s >= N_SPATIAL) return;
-  const unsigned int * row = hist + (size_t)s * K;
-  unsigned int cnt = 0;
-  for(unsigned int k = 0; k < K; k++) if(row[k]) cnt++;
-  nnz_per_row[s] = cnt;
+// GPU-side sparsifier, one warp per spatial row (coalesced row reads).
+__global__ void tab_sparsify_count(const unsigned int * hist, unsigned int N,
+                                   unsigned int K, unsigned int * nnz){
+  unsigned int s=(blockIdx.x*blockDim.x+threadIdx.x)/32, lane=threadIdx.x%32;
+  if(s>=N) return;
+  const unsigned int * row=hist+(size_t)s*K;
+  unsigned int n=0;
+  for(unsigned int k=lane; k-lane<K; k+=32) n+=__popc(__ballot_sync(0xffffffffu, k<K && row[k]));
+  if(lane==0) nnz[s]=n;
 }
 
-__global__ void tab_sparsify_write(const unsigned int * hist,
-                                   unsigned int N_SPATIAL,
-                                   unsigned int K,
-                                   const unsigned int * row_offsets,
-                                   unsigned short * tids,
-                                   unsigned int * cnts){
-  unsigned int s = blockIdx.x * blockDim.x + threadIdx.x;
-  if(s >= N_SPATIAL) return;
-  unsigned int pos = row_offsets[s];
-  const unsigned int * row = hist + (size_t)s * K;
-  for(unsigned int k = 0; k < K; k++){
-    unsigned int c = row[k];
+// Writes each row's nonzeros at off[s] (time_ids ascending) and zeroes them.
+__global__ void tab_sparsify_write(unsigned int * hist, unsigned int N, unsigned int K,
+                                   const unsigned int * nnz, const unsigned int * off,
+                                   unsigned short * tids, unsigned int * cnts){
+  unsigned int s=(blockIdx.x*blockDim.x+threadIdx.x)/32, lane=threadIdx.x%32;
+  if(s>=N || nnz[s]==0) return;
+  unsigned int * row=hist+(size_t)s*K;
+  unsigned int pos=off[s], end=pos+nnz[s];
+  for(unsigned int k=lane; pos<end; k+=32){
+    unsigned int c=k<K ? row[k] : 0;
+    unsigned int m=__ballot_sync(0xffffffffu, c);
     if(c){
-      tids[pos] = (unsigned short)k;
-      cnts[pos] = c;
-      pos++;
+      unsigned int p=pos+__popc(m&((1u<<lane)-1));
+      tids[p]=k; cnts[p]=c; row[k]=0;
     }
+    pos+=__popc(m);
   }
 }
 #endif
